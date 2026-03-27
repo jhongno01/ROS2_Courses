@@ -1,0 +1,32 @@
+# ROS2 colcon build artifacts
+build/
+install/
+log/
+
+# C/C++ build files
+*.o
+*.so
+*.a
+*.out
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS files
+.vscode/
+**/.vscode/
+*.vc.db
+*.db
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.swp
+*.swo
+*~
+
+# Optional: environment files
+.env

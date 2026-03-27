@@ -1,0 +1,3 @@
+int32 int1
+int32 int2
+int32 count
