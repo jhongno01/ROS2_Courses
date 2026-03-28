@@ -25,10 +25,10 @@ endif()
 
 # add_executable and ament_target_dependencies for each node (Build Options)
 add_executable(hw01_pub src/hw01_pub.cpp)
-ament_target_dependencies(hw01_pub rclcpp std_msgs) # Topic -> rclcpp, std_msgs
+ament_target_dependencies(hw01_pub rclcpp more_interfaces)
 
 add_executable(hw01_sub_cli src/hw01_sub_cli.cpp)
-ament_target_dependencies(hw01_sub_cli rclcpp std_msgs more_interfaces) # Topic -> rclcpp, std_msgs; Service Client -> rclcpp, more_interfaces
+ament_target_dependencies(hw01_sub_cli rclcpp more_interfaces)
 
 add_executable(hw01_srv src/hw01_srv.cpp)
 ament_target_dependencies(hw01_srv rclcpp more_interfaces) # Service Server -> rclcpp, more_interfaces
