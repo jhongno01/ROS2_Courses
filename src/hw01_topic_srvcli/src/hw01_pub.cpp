@@ -13,7 +13,7 @@ public:
   Hw01Pub()
   : Node("hw01_pub"), a_(0), b_(0), count_(0) // 노드의 이름이 "hw01_pub"로 설정되고, a_, b_, count_가 0으로 초기화된다.
   {
-    publisher_ = this->create_publisher<more_interfaces::msg::TwoInts_Iteration_count>("topic_pub_hw01", 10);
+    publisher_ = this->create_publisher<more_interfaces::msg::TwoIntsIterationCount>("topic_pub_hw01", 10);
   }
 
   bool read_input()
@@ -25,15 +25,15 @@ public:
       int ret = std::scanf("%d %d", &a_, &b_);
 
       if (ret == 2) {
-        auto message_hw01 = more_interfaces::msg::TwoInts_Iteration_count();
+        auto message_hw01 = more_interfaces::msg::TwoIntsIterationCount();
         message_hw01.a = a_;
         message_hw01.b = b_;
-        message_hw01.iteration_count = ++count_;
+        message_hw01.count = ++count_;
 
         RCLCPP_INFO_STREAM(this->get_logger(),
                           "Publishing: " << message_hw01.a << " "
                                           << message_hw01.b << " "
-                                          << message_hw01.iteration_count);
+                                          << message_hw01.count);
 
         publisher_->publish(message_hw01);
         return true;
@@ -52,9 +52,9 @@ public:
 }
 
 private : 
-  rclcpp::Publisher<more_interfaces::msg::TwoInts_Iteration_count>::SharedPtr publisher_;
-  size_t count_;
+  rclcpp::Publisher<more_interfaces::msg::TwoIntsIterationCount>::SharedPtr publisher_;
   int a_, b_;
+  size_t count_;
 };
 
 
@@ -62,7 +62,7 @@ private :
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<Hw01_shared<Hw01Pub>();
+  auto node = std::make_shared<Hw01Pub>();
 
   while (rclcpp::ok()) {
     if (!node->read_input()) {
