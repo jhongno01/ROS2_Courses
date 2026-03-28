@@ -2,12 +2,12 @@
 #include <cstdio>
 #include <memory>
 
-#include "more_interfaces/msg/hw01_numbers.hpp"
+#include "more_interfaces/msg/two_ints_iteration_count.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 using namespace std::chrono_literals;
 
-class Hw01Pub : public rclcpp::Node // rclcpp::Node 클래스를 상속받아 Hw01Pub 클래스를 정의합니다. 이 클래스는 ROS 2 노드로서, 퍼블리셔와 타이머를 포함한다.
+class Hw01Pub : public rclcpp::Node // rclcpp::Node 클래스를 상속받아 Hw01Pub 클래스를 정의합니다. 이 클래스는 ROS 2 노드로서, 퍼블리셔를 포함한다.
 {
 public:
   Hw01Pub()
@@ -16,39 +16,60 @@ public:
     publisher_ = this->create_publisher<more_interfaces::msg::TwoInts_Iteration_count>("topic_pub_hw01", 10);
   }
 
-private: 
   bool read_input()
   {
-    std::printf("Please type two int: ");
-    std::fflush(stdout);
+    while (rclcpp::ok()) {
+      std::printf("Please type two int: ");
+      std::fflush(stdout);
 
-    if (std::scanf("%d %d", &a_, &b_) != 2) {
-      RCLCPP_ERROR(this->get_logger(), "Failed to read two integers from stdin.");
-      return false;
+      int ret = std::scanf("%d %d", &a_, &b_);
+
+      if (ret == 2) {
+        auto message_hw01 = more_interfaces::msg::TwoInts_Iteration_count();
+        message_hw01.a = a_;
+        message_hw01.b = b_;
+        message_hw01.iteration_count = ++count_;
+
+        RCLCPP_INFO_STREAM(this->get_logger(),
+                          "Publishing: " << message_hw01.a << " "
+                                          << message_hw01.b << " "
+                                          << message_hw01.iteration_count);
+
+        publisher_->publish(message_hw01);
+        return true;
+      }
+
+      if (ret == EOF) { // End of file. 예를 들어, Ctrl+D (Unix) 또는 Ctrl+Z (Windows)를 누르면 EOF 발생
+        return false;  // Ctrl+D 등으로 입력 종료시 루프 종료
+      }
+
+      RCLCPP_ERROR(this->get_logger(), "Invalid input. Please enter two integers.");
+
+      int ch;
+      while ((ch = std::getchar()) != '\n' && ch != EOF) {} // \n또는 EOF가 나올 떄 까지 입력 버퍼를 비워 실패 Error 무한루프 방지
     }
+  return false;
+}
 
-    auto message_hw01 = more_interfaces::msg::TwoInts_Iteration_count();
-    message_hw01.a = a_;
-    message_hw01.b = b_;
-    message_hw01.iteration_count = ++count_; // 입력이 성공적으로 읽혔을 때 iteration 카운터를 증가시킵니다.
+private : 
+  rclcpp::Publisher<more_interfaces::msg::TwoInts_Iteration_count>::SharedPtr publisher_;
+  size_t count_;
+  int a_, b_;
+};
 
-    RCLCPP_INFO(this->get_logger(), "Publishing: '%d %d %d'", message_hw01.a, message_hw01.b, message_hw01.iteration_count);
 
-    publisher_->publish(message_hw01);
-    return true;
-  }
 
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<Hw01Pub>();
+  auto node = std::make_shared<Hw01_shared<Hw01Pub>();
 
-  if (!node->read_input()) {
-    rclcpp::shutdown();
-    return 1;
+  while (rclcpp::ok()) {
+    if (!node->read_input()) {
+      break;
+    }
   }
 
-  rclcpp::spin(node);
   rclcpp::shutdown();
   return 0;
 }
