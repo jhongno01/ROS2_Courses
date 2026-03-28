@@ -7,15 +7,19 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+
+set(msg_files
+  "msg/Hw01Numbers.msg"
+  "msg/TwoInts_Iteration_count.msg"
+)
 
 set(srv_files
   "srv/AddTwoInts.srv"
+  "srv/Times_AddTwoInts.srv"
 )
 rosidl_generate_interfaces(${PROJECT_NAME}
+  ${msg_files}
   ${srv_files}
 )
 

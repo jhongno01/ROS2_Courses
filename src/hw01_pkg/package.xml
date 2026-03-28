@@ -3,9 +3,9 @@
 <package format="3">
   <name>hw01_pkg</name>
   <version>0.0.0</version>
-  <description>TODO: HomeWork for lecture01</description>
-  <maintainer email="hongseok@todo.todo">hongseok</maintainer>
-  <license>TODO: License declaration</license>
+  <description>Homework package for lecture 1 ROS2 publisher and subscriber practice.</description>
+  <maintainer email="hongseok@example.com">hongseok</maintainer>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
