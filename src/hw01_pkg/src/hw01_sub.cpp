@@ -11,7 +11,8 @@ public:
     hw01_sub()
         : Node("hw01_sub")
     {
-        hw01_sub_ = this->create_subscription<std_msgs::msg::String>("topic_hw01_a", 10, std::bind(&hw01_sub::hw01_topic_callback, this, _1));
+        hw01_sub_ = this->create_subscription<std_msgs::msg::String>
+        ("topic_hw01_a", 10, std::bind(&hw01_sub::hw01_topic_callback, this, _1));
     }
 
 private:

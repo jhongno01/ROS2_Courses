@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(more_interfaces)
+project(hw02_lidar_subscriber)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -7,26 +7,10 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
-find_package(rosidl_default_generators REQUIRED)
-
-set(srv_files
-  "srv/AddTwoInts.srv"
-  "srv/TimesAddTwoInts.srv"
-)
-set(msg_files
-  "msg/TwoIntsIterationCount.msg"
-  "msg/Hw01Numbers.msg"
-  "msg/Hw02Numbers.msg"
-)
-rosidl_generate_interfaces(${PROJECT_NAME}
-  ${srv_files}
-  ${msg_files}
-)
-
-ament_export_dependencies(rosidl_default_runtime)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(more_interfaces REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -39,5 +23,16 @@ if(BUILD_TESTING)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
+
+add_executable(lidar_angle_publisher src/lidar_angle_publisher.cpp)
+ament_target_dependencies(lidar_angle_publisher rclcpp std_msgs more_interfaces)
+add_executable(lidar_subscriber src/lidar_subscriber.cpp)
+ament_target_dependencies(lidar_subscriber rclcpp sensor_msgs std_msgs more_interfaces)
+
+install(TARGETS
+  lidar_angle_publisher
+  lidar_subscriber
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_package()
