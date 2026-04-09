@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(more_interfaces)
+project(hw03_rgbd_subscriber)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -7,27 +7,10 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
-find_package(rosidl_default_generators REQUIRED)
-
-set(srv_files
-  "srv/AddTwoInts.srv"
-  "srv/TimesAddTwoInts.srv"
-)
-set(msg_files
-  "msg/TwoIntsIterationCount.msg"
-  "msg/Hw01Numbers.msg"
-  "msg/Hw02Numbers.msg"
-  "msg/Hw03Abcd.msg"
-)
-rosidl_generate_interfaces(${PROJECT_NAME}
-  ${srv_files}
-  ${msg_files}
-)
-
-ament_export_dependencies(rosidl_default_runtime)
+find_package(rclcpp REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(more_interfaces REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -40,5 +23,17 @@ if(BUILD_TESTING)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
+
+add_executable(hw03_pub_abcd src/hw03_pub_abcd.cpp)
+ament_target_dependencies(hw03_pub_abcd rclcpp std_msgs sensor_msgs more_interfaces)
+
+add_executable(hw03_sub_rgbd_gyro src/hw03_sub_rgbd_gyro.cpp)
+ament_target_dependencies(hw03_sub_rgbd_gyro rclcpp std_msgs sensor_msgs more_interfaces)
+
+install(TARGETS
+  hw03_pub_abcd
+  hw03_sub_rgbd_gyro
+  DESTINATION lib/${PROJECT_NAME}
+)
 
 ament_package()
