@@ -141,8 +141,8 @@ private:
   struct StateSnapshot
   {
     float requested_speed = 0.0f;
-    int window_start_deg = -100;
-    int window_end_deg = 80;
+    int window_start_deg = -30;
+    int window_end_deg = 30;
     bool imu_ready = false;
     bool scan_ready = false;
     float roll_deg = 0.0f;

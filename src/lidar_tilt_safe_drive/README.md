@@ -2,21 +2,19 @@
 
 ## 개요
 
-`lidar_tilt_safe_drive`는 중간고사 요구사항을 바로 실행할 수 있도록 정리한 ROS 2 C++ 패키지입니다.
-
-이 패키지는 다음 세 가지 역할을 나눠서 제공합니다.
+`lidar_tilt_safe_drive` 패키지는 다음 세 가지 역할을 나눠서 제공합니다.
 
 - `speed_input_publisher`: 터미널에서 `0.0 ~ 1.0` 속도를 입력받아 발행
 - `angle_range_input_publisher`: 터미널에서 감시할 LiDAR 각도 두 개를 입력받아 발행
 - `lidar_tilt_safe_drive`: LiDAR, IMU, 입력 토픽을 종합해서 `/cmd_vel`을 제어하고 1초마다 최소 거리 정보를 출력
 
-기존 패키지에서 가져온 핵심 흐름은 아래와 같습니다.
+기존 패키지에서 재사용한 코드
 
 - `hw05_lidar_fb_motor`: `/cmd_vel` 퍼블리시 구조와 안전 정지 방식
 - `hw02_lidar_subscriber`: 터미널 기반 각도 입력 퍼블리셔 패턴
 - `hw04_read_lidar_with_imu`: IMU + LiDAR 동시 구독 구조
 
-## 요구사항 반영 내용
+## Window 별 기능
 
 1. 속도 입력 창
    - `speed_input_publisher`가 `0.0 ~ 1.0` 범위의 속도를 반복 입력받습니다.
@@ -73,13 +71,13 @@ bool stop_for_distance
 
 - 입력 각도는 `0 ~ 359` 범위로 받습니다.
 - 내부에서는 `[-180, 180)` 기준으로 정규화해서 사용합니다.
-- 감시 구간은 `start_deg -> end_deg` 방향으로 해석합니다.
-  - 예: `260 80`이면 내부적으로 `-100도 -> 80도`와 같은 구간을 감시합니다.
-  - 예: `170 190`이면 내부적으로 `170도 -> -170도`처럼 `180도` 부근을 가로지르는 구간을 감시할 수 있습니다.
+- 감시 구간은 `start_deg -> end_deg` 방향으로 해석하며, `start_deg`부터 + 방향 각도로 계산합니다.
+  - 예: `330 40`이면 내부적으로 `-30도 -> 40도`의 구간을 감시합니다.
+  - 예: `40 330`이면 내부적으로 `40도 -> 330도`처럼 `180도` 부근을 가로지르는 구간을 감시할 수 있습니다.
 
 ## 빌드
 
-워크스페이스 루트에서 실행합니다.
+ROS2 워크스페이스 루트에서 실행합니다.
 
 ```bash
 colcon build --packages-select more_interfaces lidar_tilt_safe_drive
@@ -142,7 +140,7 @@ ros2 run lidar_tilt_safe_drive angle_range_input_publisher
 예:
 
 ```text
-Please type two lidar angles (example: -100 80): -100 80
+Please type two lidar angles : 340 20
 ```
 
 ## 기본 파라미터
