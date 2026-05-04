@@ -72,7 +72,7 @@ public:
       : Node("lidar_tilt_safe_drive"),
         stop_distance_m_(static_cast<float>(this->declare_parameter("stop_distance_m", 0.20))),
         slow_distance_m_(static_cast<float>(this->declare_parameter("slow_distance_m", 0.60))),
-        steer_distance_m_(static_cast<float>(this->declare_parameter("steer_distance_m", 1.20))),
+        steer_distance_m_(static_cast<float>(this->declare_parameter("steer_distance_m", 0.80))),
         tilt_stop_deg_(static_cast<float>(this->declare_parameter("tilt_stop_deg", 60.0))),
         max_turn_rate_(static_cast<float>(this->declare_parameter("max_turn_rate", 2.84))), // 따로 제한하기 위함
         control_period_ms_(this->declare_parameter("control_period_ms", 100)),
@@ -392,7 +392,7 @@ private:
       turn_direction = -1;
     }
 
-    const float requested_turn_rate = static_cast<float>(turn_direction) * max_turn_rate_ * proximity;
+    const float requested_turn_rate = requested_speed_ * static_cast<float>(turn_direction) * max_turn_rate_ * proximity;
     return std::clamp(requested_turn_rate, -max_angular_speed_, max_angular_speed_);
   }
 
