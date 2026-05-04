@@ -74,7 +74,8 @@ public:
         slow_distance_m_(static_cast<float>(this->declare_parameter("slow_distance_m", 0.60))),
         steer_distance_m_(static_cast<float>(this->declare_parameter("steer_distance_m", 0.80))),
         tilt_stop_deg_(static_cast<float>(this->declare_parameter("tilt_stop_deg", 60.0))),
-        max_turn_rate_(static_cast<float>(this->declare_parameter("max_turn_rate", 2.84))), // 따로 제한하기 위함
+        max_turn_rate_(static_cast<float>(this->declare_parameter("max_turn_rate", 2.84))),
+        speed_to_turn_gain_(static_cast<float>(this->declare_parameter("speed_to_turn_gain", 1.0))),
         control_period_ms_(this->declare_parameter("control_period_ms", 100)),
         report_period_ms_(this->declare_parameter("report_period_ms", 1000))
   {
@@ -109,9 +110,10 @@ public:
 
     RCLCPP_INFO(
         this->get_logger(),
-        "Safety drive started. stop_distance=%.2fm, tilt_stop=%.1fdeg, default window=%ddeg -> %ddeg",
+        "Safety drive started. stop_distance=%.2fm, tilt_stop=%.1fdeg, speed_to_turn_gain=%.2f, default window=%ddeg -> %ddeg",
         stop_distance_m_,
         tilt_stop_deg_,
+        speed_to_turn_gain_,
         window_start_deg_,
         window_end_deg_);
   }
@@ -332,7 +334,7 @@ private:
     if (state.window_result.valid)
     {
       output_linear_x *= compute_linear_scale(state.window_result.min_distance_m);
-      output_angular_z = compute_steering_command(state.window_result);
+      output_angular_z = compute_steering_command(state.window_result, state.requested_speed);
     }
 
     output.output_linear_x = output_linear_x;
@@ -361,9 +363,9 @@ private:
     return std::clamp((min_distance_m - stop_distance_m_) / span, 0.0f, 1.0f);
   }
 
-  float compute_steering_command(const WindowResult &result) const
+  float compute_steering_command(const WindowResult &result, float requested_speed) const
   {
-    if (!result.valid || !std::isfinite(result.min_distance_m))
+    if (!result.valid || !std::isfinite(result.min_distance_m) || requested_speed <= 0.0f)
     {
       return 0.0f;
     }
@@ -392,7 +394,8 @@ private:
       turn_direction = -1;
     }
 
-    const float requested_turn_rate = requested_speed_ * static_cast<float>(turn_direction) * max_turn_rate_ * proximity;
+    const float requested_turn_rate =
+        speed_to_turn_gain_ * requested_speed * static_cast<float>(turn_direction) * max_turn_rate_ * proximity;
     return std::clamp(requested_turn_rate, -max_angular_speed_, max_angular_speed_);
   }
 
@@ -477,6 +480,7 @@ private:
   const float steer_distance_m_;
   const float tilt_stop_deg_;
   const float max_turn_rate_;
+  const float speed_to_turn_gain_;
   const int control_period_ms_;
   const int report_period_ms_;
 
