@@ -12,8 +12,8 @@ find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
-add_executable(lider_sub_motor_pub src/lider_sub_motor_pub.cpp)
-ament_target_dependencies(lider_sub_motor_pub
+add_executable(lidar_sub_motor_pub src/lidar_sub_motor_pub.cpp)
+ament_target_dependencies(lidar_sub_motor_pub
   rclcpp
   std_msgs
   sensor_msgs
@@ -21,7 +21,7 @@ ament_target_dependencies(lider_sub_motor_pub
 )
 
 install(TARGETS
-  lider_sub_motor_pub
+  lidar_sub_motor_pub
   DESTINATION lib/${PROJECT_NAME}
 )
 

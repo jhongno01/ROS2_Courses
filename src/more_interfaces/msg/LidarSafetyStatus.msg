@@ -1,0 +1,13 @@
+int32 window_start_deg
+int32 window_end_deg
+int32 min_angle_deg
+float32 min_distance_m
+float32 tilt_deg
+float32 requested_speed
+float32 output_linear_x
+float32 output_angular_z
+bool imu_ready
+bool scan_ready
+bool window_measurement_valid
+bool tilt_safe
+bool stop_for_distance

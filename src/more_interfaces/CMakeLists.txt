@@ -21,6 +21,8 @@ set(msg_files
   "msg/Hw01Numbers.msg"
   "msg/Hw02Numbers.msg"
   "msg/Hw03Abcd.msg"
+  "msg/LidarAngleRange.msg"
+  "msg/LidarSafetyStatus.msg"
 )
 rosidl_generate_interfaces(${PROJECT_NAME}
   ${srv_files}
