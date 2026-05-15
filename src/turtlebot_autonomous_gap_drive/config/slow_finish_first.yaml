@@ -1,0 +1,35 @@
+turtlebot_autonomous_gap_drive:
+  ros__parameters:
+    scan_topic: /scan
+    cmd_vel_topic: /cmd_vel
+    cmd_vel_stamped: false
+
+    control_period_ms: 100
+    report_period_ms: 1000
+
+    max_linear_speed: 0.10
+    min_linear_speed: 0.03
+    max_angular_speed: 1.25
+
+    emergency_stop_distance_m: 0.22
+    front_stop_distance_m: 0.34
+    front_slow_distance_m: 0.85
+    side_stop_distance_m: 0.18
+    safe_gap_distance_m: 0.45
+    target_distance_cap_m: 2.50
+
+    search_angle_deg: 105.0
+    gap_window_deg: 22.0
+    sample_step_deg: 3.0
+    front_window_deg: 18.0
+    side_angle_deg: 70.0
+    side_window_deg: 18.0
+
+    heading_gain: 1.55
+    centering_gain: 0.55
+    forward_bias_weight: 0.55
+    turn_slowdown_gain: 0.65
+    recovery_turn_speed: 0.75
+    recovery_flip_seconds: 4.0
+    lost_scan_timeout_seconds: 1.0
+    prefer_left_recovery: true
