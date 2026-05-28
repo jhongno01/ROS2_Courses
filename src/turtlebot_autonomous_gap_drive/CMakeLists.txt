@@ -13,6 +13,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 
 add_executable(gap_drive_node src/gap_drive_node.cpp)
@@ -20,6 +21,7 @@ ament_target_dependencies(gap_drive_node
   rclcpp
   sensor_msgs
   geometry_msgs
+  nav_msgs
   std_srvs
 )
 

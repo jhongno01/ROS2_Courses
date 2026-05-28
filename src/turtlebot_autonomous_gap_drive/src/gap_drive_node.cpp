@@ -12,10 +12,10 @@
 
 #include "geometry_msgs/msg/twist.hpp"
 #include "geometry_msgs/msg/twist_stamped.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
-#include "sensor_msgs/msg/magnetic_field.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 
 using std::placeholders::_1;
@@ -68,10 +68,6 @@ double sign_value(double value)
   return 0.0;
 }
 
-bool all_finite(double x, double y, double z)
-{
-  return std::isfinite(x) && std::isfinite(y) && std::isfinite(z);
-}
 }  // namespace
 
 struct ScanSummary
@@ -80,8 +76,10 @@ struct ScanSummary
   double left_m = 0.0;
   double right_m = 0.0;
   double best_gap_m = 0.0;
+  double best_gap_width_m = 0.0;
   double best_angle_rad = 0.0;
   bool has_safe_gap = false;
+  bool has_gap_width = false;
 };
 
 struct DriveOutput
@@ -93,7 +91,7 @@ struct DriveOutput
   ScanSummary scan;
   bool enabled_requested = false;
   bool imu_ready = false;
-  bool mag_ready = false;
+  bool odom_ready = false;
   bool heading_reference_valid = false;
   double tilt_deg = 0.0;
   double heading_error_deg = 0.0;
@@ -106,7 +104,7 @@ public:
   : Node("turtlebot_autonomous_gap_drive"),
     scan_topic_(this->declare_parameter<std::string>("scan_topic", "/scan")),
     imu_topic_(this->declare_parameter<std::string>("imu_topic", "/imu")),
-    mag_topic_(this->declare_parameter<std::string>("mag_topic", "/mag")),
+    odom_topic_(this->declare_parameter<std::string>("odom_topic", "/odom")),
     cmd_vel_topic_(this->declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel")),
     cmd_vel_stamped_(this->declare_parameter<bool>("cmd_vel_stamped", false)),
     auto_start_(this->declare_parameter<bool>("auto_start", false)),
@@ -138,7 +136,12 @@ public:
     prefer_left_recovery_(this->declare_parameter<bool>("prefer_left_recovery", true)),
     tilt_stop_deg_(this->declare_parameter<double>("tilt_stop_deg", 60.0)),
     imu_timeout_seconds_(this->declare_parameter<double>("imu_timeout_seconds", 1.0)),
-    mag_timeout_seconds_(this->declare_parameter<double>("mag_timeout_seconds", 1.0)),
+    gyro_yaw_sign_(this->declare_parameter<double>("gyro_yaw_sign", 1.0)),
+    gyro_angular_deadband_rad_s_(
+      this->declare_parameter<double>("gyro_angular_deadband_rad_s", 0.01)),
+    gyro_integration_max_dt_seconds_(
+      this->declare_parameter<double>("gyro_integration_max_dt_seconds", 0.25)),
+    odom_timeout_seconds_(this->declare_parameter<double>("odom_timeout_seconds", 1.0)),
     reverse_heading_threshold_deg_(
       this->declare_parameter<double>("reverse_heading_threshold_deg", 150.0)),
     reverse_hold_seconds_(this->declare_parameter<double>("reverse_hold_seconds", 2.0)),
@@ -146,8 +149,23 @@ public:
     heading_recovery_turn_speed_(
       this->declare_parameter<double>("heading_recovery_turn_speed", 0.60)),
     reverse_resume_threshold_deg_(this->declare_parameter<double>("reverse_resume_threshold_deg", 45.0)),
-    mag_yaw_sign_(this->declare_parameter<double>("mag_yaw_sign", 1.0)),
-    mag_yaw_offset_deg_(this->declare_parameter<double>("mag_yaw_offset_deg", 0.0))
+    stuck_recovery_enabled_(this->declare_parameter<bool>("stuck_recovery_enabled", true)),
+    stuck_command_linear_threshold_(
+      this->declare_parameter<double>("stuck_command_linear_threshold", 0.03)),
+    stuck_odom_linear_threshold_(
+      this->declare_parameter<double>("stuck_odom_linear_threshold", 0.01)),
+    stuck_min_progress_m_(this->declare_parameter<double>("stuck_min_progress_m", 0.03)),
+    stuck_hold_seconds_(this->declare_parameter<double>("stuck_hold_seconds", 3.0)),
+    stuck_backup_speed_(this->declare_parameter<double>("stuck_backup_speed", 0.04)),
+    stuck_backup_seconds_(this->declare_parameter<double>("stuck_backup_seconds", 0.8)),
+    stuck_turn_speed_(this->declare_parameter<double>("stuck_turn_speed", 0.60)),
+    stuck_turn_seconds_(this->declare_parameter<double>("stuck_turn_seconds", 1.0)),
+    stuck_cooldown_seconds_(this->declare_parameter<double>("stuck_cooldown_seconds", 2.0)),
+    enforce_gap_width_(this->declare_parameter<bool>("enforce_gap_width", true)),
+    min_passage_width_m_(this->declare_parameter<double>("min_passage_width_m", 0.24)),
+    gap_width_search_deg_(this->declare_parameter<double>("gap_width_search_deg", 45.0)),
+    gap_width_obstacle_max_range_m_(
+      this->declare_parameter<double>("gap_width_obstacle_max_range_m", 1.20))
   {
     enabled_requested_ = auto_start_;
 
@@ -172,10 +190,10 @@ public:
       rclcpp::SensorDataQoS(),
       std::bind(&TurtlebotAutonomousGapDrive::imu_callback, this, _1));
 
-    mag_subscription_ = this->create_subscription<sensor_msgs::msg::MagneticField>(
-      mag_topic_,
+    odom_subscription_ = this->create_subscription<nav_msgs::msg::Odometry>(
+      odom_topic_,
       rclcpp::SensorDataQoS(),
-      std::bind(&TurtlebotAutonomousGapDrive::mag_callback, this, _1));
+      std::bind(&TurtlebotAutonomousGapDrive::odom_callback, this, _1));
 
     set_enabled_service_ = this->create_service<std_srvs::srv::SetBool>(
       "/turtlebot_autonomous_gap_drive/set_enabled",
@@ -193,10 +211,10 @@ public:
 
     RCLCPP_INFO(
       this->get_logger(),
-      "Started gap drive: scan=%s imu=%s mag=%s cmd=%s type=%s auto_start=%s max_v=%.2f",
+      "Started gap drive: scan=%s imu=%s odom=%s cmd=%s type=%s auto_start=%s max_v=%.2f",
       scan_topic_.c_str(),
       imu_topic_.c_str(),
-      mag_topic_.c_str(),
+      odom_topic_.c_str(),
       cmd_vel_topic_.c_str(),
       cmd_vel_stamped_ ? "TwistStamped" : "Twist",
       auto_start_ ? "true" : "false",
@@ -219,7 +237,7 @@ private:
   {
     bool enabled_requested = false;
     bool imu_ready = false;
-    bool mag_ready = false;
+    bool odom_ready = false;
     bool heading_reference_valid = false;
     double roll_rad = 0.0;
     double pitch_rad = 0.0;
@@ -227,7 +245,14 @@ private:
     double current_heading_rad = 0.0;
     double heading_reference_rad = 0.0;
     rclcpp::Time latest_imu_time;
-    rclcpp::Time latest_mag_time;
+    rclcpp::Time latest_odom_time;
+  };
+
+  enum class StuckRecoveryPhase
+  {
+    IDLE,
+    BACKUP,
+    TURN
   };
 
   void set_enabled_callback(
@@ -262,6 +287,8 @@ private:
         heading_reference_valid_ = false;
         reverse_condition_active_ = false;
         reverse_recovery_active_ = false;
+        stuck_candidate_active_ = false;
+        stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
         reset_recovery_state();
         publish_stop = true;
       }
@@ -270,9 +297,9 @@ private:
     if (request->data) {
       response->success = true;
       if (heading_reset) {
-        response->message = "Gap drive enabled. Heading reference reset from current magnetometer heading.";
+        response->message = "Gap drive enabled. Gyro yaw reference reset.";
       } else if (waiting_for_sensors) {
-        response->message = "Gap drive start requested. Waiting for current IMU and magnetometer data.";
+        response->message = "Gap drive start requested. Waiting for current IMU data.";
       } else {
         response->message = "Gap drive enabled.";
       }
@@ -299,13 +326,14 @@ private:
 
   void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
   {
+    const double angular_velocity_z = msg->angular_velocity.z;
     const double norm = std::sqrt(
       msg->orientation.x * msg->orientation.x +
       msg->orientation.y * msg->orientation.y +
       msg->orientation.z * msg->orientation.z +
       msg->orientation.w * msg->orientation.w);
 
-    if (!std::isfinite(norm) || norm < 1e-6) {
+    if (!std::isfinite(norm) || norm < 1e-6 || !std::isfinite(angular_velocity_z)) {
       std::lock_guard<std::mutex> lock(data_mutex_);
       imu_ready_ = false;
       return;
@@ -324,29 +352,44 @@ private:
     const double pitch_rad =
       std::fabs(sinp) >= 1.0 ? std::copysign(kPi / 2.0, sinp) : std::asin(sinp);
 
+    const rclcpp::Time now = this->now();
+
     std::lock_guard<std::mutex> lock(data_mutex_);
+    if (imu_ready_) {
+      const double dt = (now - latest_imu_time_).seconds();
+      if (dt > 0.0 && dt <= gyro_integration_max_dt_seconds_) {
+        const double gyro_z =
+          std::fabs(angular_velocity_z) < gyro_angular_deadband_rad_s_ ? 0.0 : angular_velocity_z;
+        current_heading_rad_ =
+          normalize_angle_rad(current_heading_rad_ + gyro_yaw_sign_ * gyro_z * dt);
+      }
+    }
+
     roll_rad_ = roll_rad;
     pitch_rad_ = pitch_rad;
     max_tilt_deg_ = std::max(std::fabs(rad_to_deg(roll_rad_)), std::fabs(rad_to_deg(pitch_rad_)));
-    latest_imu_time_ = this->now();
+    latest_imu_time_ = now;
     imu_ready_ = true;
   }
 
-  void mag_callback(const sensor_msgs::msg::MagneticField::SharedPtr msg)
+  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
   {
-    const double mx = msg->magnetic_field.x;
-    const double my = msg->magnetic_field.y;
-    const double mz = msg->magnetic_field.z;
+    const double x = msg->pose.pose.position.x;
+    const double y = msg->pose.pose.position.y;
+    const double vx = msg->twist.twist.linear.x;
+    const double vy = msg->twist.twist.linear.y;
 
     std::lock_guard<std::mutex> lock(data_mutex_);
-    if (!all_finite(mx, my, mz) || !imu_ready_) {
-      mag_ready_ = false;
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(vx) || !std::isfinite(vy)) {
+      odom_ready_ = false;
       return;
     }
 
-    current_heading_rad_ = compute_tilt_compensated_heading(mx, my, mz, roll_rad_, pitch_rad_);
-    latest_mag_time_ = this->now();
-    mag_ready_ = true;
+    odom_x_ = x;
+    odom_y_ = y;
+    odom_linear_speed_ = std::sqrt(vx * vx + vy * vy);
+    latest_odom_time_ = this->now();
+    odom_ready_ = true;
   }
 
   void control_timer_callback()
@@ -422,6 +465,7 @@ private:
     output = compute_drive_output(*scan);
     annotate_output(output, get_safety_snapshot());
     apply_reverse_guard(output, now);
+    apply_stuck_recovery(output, now);
 
     publish_velocity(output.linear_x, output.angular_z);
     store_output(output);
@@ -500,6 +544,12 @@ private:
         continue;
       }
 
+      double gap_width = 0.0;
+      bool gap_width_measured = false;
+      if (!gap_width_allows(scan, angle_deg, gap_width, gap_width_measured)) {
+        continue;
+      }
+
       const double capped_clearance = std::min(clearance, target_distance_cap_m_);
       const double forward_penalty =
         forward_bias_weight_ * std::fabs(angle_deg) / std::max(1.0, search_angle_deg_);
@@ -508,8 +558,10 @@ private:
       if (score > best_score) {
         best_score = score;
         summary.best_gap_m = clearance;
+        summary.best_gap_width_m = gap_width;
         summary.best_angle_rad = deg_to_rad(angle_deg);
         summary.has_safe_gap = true;
+        summary.has_gap_width = gap_width_measured;
       }
     }
 
@@ -539,6 +591,72 @@ private:
       return 0.0;
     }
     return min_range;
+  }
+
+  bool gap_width_allows(
+    const sensor_msgs::msg::LaserScan & scan,
+    double center_deg,
+    double & width_m,
+    bool & measured) const
+  {
+    width_m = 0.0;
+    measured = false;
+
+    if (!enforce_gap_width_) {
+      return true;
+    }
+
+    double left_angle_rad = 0.0;
+    double left_range_m = 0.0;
+    double right_angle_rad = 0.0;
+    double right_range_m = 0.0;
+
+    const bool has_left =
+      find_gap_boundary(scan, center_deg, 1.0, left_angle_rad, left_range_m);
+    const bool has_right =
+      find_gap_boundary(scan, center_deg, -1.0, right_angle_rad, right_range_m);
+
+    if (!has_left || !has_right) {
+      return true;
+    }
+
+    const double angle_between = std::fabs(normalize_angle_rad(left_angle_rad - right_angle_rad));
+    const double width_squared =
+      left_range_m * left_range_m + right_range_m * right_range_m -
+      2.0 * left_range_m * right_range_m * std::cos(angle_between);
+
+    width_m = std::sqrt(std::max(0.0, width_squared));
+    measured = true;
+    return width_m >= min_passage_width_m_;
+  }
+
+  bool find_gap_boundary(
+    const sensor_msgs::msg::LaserScan & scan,
+    double center_deg,
+    double direction,
+    double & boundary_angle_rad,
+    double & boundary_range_m) const
+  {
+    const double step_deg = std::max(1.0, sample_step_deg_);
+    for (double offset_deg = step_deg;
+      offset_deg <= gap_width_search_deg_;
+      offset_deg += step_deg)
+    {
+      const double angle_rad = deg_to_rad(center_deg + direction * offset_deg);
+      double range = 0.0;
+      if (!range_at_angle(scan, angle_rad, range)) {
+        continue;
+      }
+
+      const double sanitized = sanitize_range(scan, range);
+      if (sanitized <= gap_width_obstacle_max_range_m_) {
+        boundary_angle_rad = angle_rad;
+        boundary_range_m = sanitized;
+        return true;
+      }
+    }
+
+    return false;
   }
 
   bool range_at_angle(
@@ -612,55 +730,35 @@ private:
     recovery_active_ = false;
   }
 
-  double compute_tilt_compensated_heading(
-    double mx,
-    double my,
-    double mz,
-    double roll_rad,
-    double pitch_rad) const
-  {
-    const double cos_roll = std::cos(roll_rad);
-    const double sin_roll = std::sin(roll_rad);
-    const double cos_pitch = std::cos(pitch_rad);
-    const double sin_pitch = std::sin(pitch_rad);
-
-    const double compensated_x = mx * cos_pitch + mz * sin_pitch;
-    const double compensated_y =
-      mx * sin_roll * sin_pitch + my * cos_roll - mz * sin_roll * cos_pitch;
-    const double raw_heading = std::atan2(compensated_y, compensated_x);
-
-    return normalize_angle_rad(mag_yaw_sign_ * raw_heading + deg_to_rad(mag_yaw_offset_deg_));
-  }
-
   bool sensors_current_locked(const rclcpp::Time & now) const
   {
     return imu_ready_ &&
-           mag_ready_ &&
-           (now - latest_imu_time_).seconds() <= imu_timeout_seconds_ &&
-           (now - latest_mag_time_).seconds() <= mag_timeout_seconds_;
+           (now - latest_imu_time_).seconds() <= imu_timeout_seconds_;
   }
 
   bool reset_heading_reference_from_current()
   {
     std::lock_guard<std::mutex> lock(data_mutex_);
-    if (!mag_ready_) {
+    if (!imu_ready_) {
       return false;
     }
 
     set_heading_reference_locked();
     RCLCPP_INFO(
       this->get_logger(),
-      "Heading reference reset: %.1f deg",
-      rad_to_deg(heading_reference_rad_));
+      "Gyro yaw reference reset");
     return true;
   }
 
   void set_heading_reference_locked()
   {
-    heading_reference_rad_ = current_heading_rad_;
+    current_heading_rad_ = 0.0;
+    heading_reference_rad_ = 0.0;
     heading_reference_valid_ = true;
     reverse_condition_active_ = false;
     reverse_recovery_active_ = false;
+    stuck_candidate_active_ = false;
+    stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
   }
 
   SafetySnapshot get_safety_snapshot()
@@ -669,7 +767,7 @@ private:
     SafetySnapshot snapshot;
     snapshot.enabled_requested = enabled_requested_;
     snapshot.imu_ready = imu_ready_;
-    snapshot.mag_ready = mag_ready_;
+    snapshot.odom_ready = odom_ready_;
     snapshot.heading_reference_valid = heading_reference_valid_;
     snapshot.roll_rad = roll_rad_;
     snapshot.pitch_rad = pitch_rad_;
@@ -677,7 +775,7 @@ private:
     snapshot.current_heading_rad = current_heading_rad_;
     snapshot.heading_reference_rad = heading_reference_rad_;
     snapshot.latest_imu_time = latest_imu_time_;
-    snapshot.latest_mag_time = latest_mag_time_;
+    snapshot.latest_odom_time = latest_odom_time_;
     return snapshot;
   }
 
@@ -690,16 +788,8 @@ private:
       wait_reason = "waiting for imu";
       return false;
     }
-    if (!safety.mag_ready) {
-      wait_reason = "waiting for magnetometer";
-      return false;
-    }
     if ((now - safety.latest_imu_time).seconds() > imu_timeout_seconds_) {
       wait_reason = "imu timeout";
-      return false;
-    }
-    if ((now - safety.latest_mag_time).seconds() > mag_timeout_seconds_) {
-      wait_reason = "magnetometer timeout";
       return false;
     }
     return true;
@@ -709,11 +799,11 @@ private:
   {
     output.enabled_requested = safety.enabled_requested;
     output.imu_ready = safety.imu_ready;
-    output.mag_ready = safety.mag_ready;
+    output.odom_ready = safety.odom_ready;
     output.heading_reference_valid = safety.heading_reference_valid;
     output.tilt_deg = safety.max_tilt_deg;
 
-    if (safety.mag_ready && safety.heading_reference_valid) {
+    if (safety.heading_reference_valid) {
       output.heading_error_deg =
         rad_to_deg(normalize_angle_rad(safety.current_heading_rad - safety.heading_reference_rad));
     }
@@ -728,7 +818,7 @@ private:
 
     {
       std::lock_guard<std::mutex> lock(data_mutex_);
-      if (!mag_ready_ || !heading_reference_valid_) {
+      if (!heading_reference_valid_) {
         return;
       }
 
@@ -778,6 +868,132 @@ private:
     }
   }
 
+  void apply_stuck_recovery(DriveOutput & output, const rclcpp::Time & now)
+  {
+    if (!stuck_recovery_enabled_) {
+      return;
+    }
+
+    if (stuck_recovery_phase_ != StuckRecoveryPhase::IDLE) {
+      update_stuck_recovery_command(output, now);
+      return;
+    }
+
+    if (stuck_recovery_finished_once_ &&
+      (now - last_stuck_recovery_finished_at_).seconds() < stuck_cooldown_seconds_)
+    {
+      return;
+    }
+
+    if (output.linear_x <= stuck_command_linear_threshold_) {
+      stuck_candidate_active_ = false;
+      return;
+    }
+
+    bool odom_ready = false;
+    double odom_age = 0.0;
+    double odom_x = 0.0;
+    double odom_y = 0.0;
+    double odom_linear_speed = 0.0;
+
+    {
+      std::lock_guard<std::mutex> lock(data_mutex_);
+      odom_ready = odom_ready_;
+      odom_age = (now - latest_odom_time_).seconds();
+      odom_x = odom_x_;
+      odom_y = odom_y_;
+      odom_linear_speed = odom_linear_speed_;
+    }
+
+    if (!odom_ready || odom_age > odom_timeout_seconds_) {
+      stuck_candidate_active_ = false;
+      return;
+    }
+
+    if (odom_linear_speed > stuck_odom_linear_threshold_) {
+      stuck_candidate_active_ = false;
+      return;
+    }
+
+    if (!stuck_candidate_active_) {
+      stuck_candidate_active_ = true;
+      stuck_candidate_started_at_ = now;
+      stuck_candidate_x_ = odom_x;
+      stuck_candidate_y_ = odom_y;
+      return;
+    }
+
+    const double dx = odom_x - stuck_candidate_x_;
+    const double dy = odom_y - stuck_candidate_y_;
+    const double progress = std::sqrt(dx * dx + dy * dy);
+    if (progress > stuck_min_progress_m_) {
+      stuck_candidate_active_ = false;
+      return;
+    }
+
+    if ((now - stuck_candidate_started_at_).seconds() >= stuck_hold_seconds_) {
+      start_stuck_recovery(output, now);
+      update_stuck_recovery_command(output, now);
+    }
+  }
+
+  void start_stuck_recovery(const DriveOutput & output, const rclcpp::Time & now)
+  {
+    stuck_candidate_active_ = false;
+    stuck_recovery_phase_ = StuckRecoveryPhase::BACKUP;
+    stuck_phase_started_at_ = now;
+    stuck_turn_direction_ = choose_stuck_turn_direction(output.scan);
+    reverse_condition_active_ = false;
+    reverse_recovery_active_ = false;
+    reset_recovery_state();
+  }
+
+  int choose_stuck_turn_direction(const ScanSummary & scan) const
+  {
+    if (std::fabs(scan.left_m - scan.right_m) < 0.05) {
+      return prefer_left_recovery_ ? 1 : -1;
+    }
+    return scan.left_m > scan.right_m ? 1 : -1;
+  }
+
+  void update_stuck_recovery_command(DriveOutput & output, const rclcpp::Time & now)
+  {
+    double phase_elapsed = (now - stuck_phase_started_at_).seconds();
+
+    if (stuck_recovery_phase_ == StuckRecoveryPhase::BACKUP &&
+      phase_elapsed >= stuck_backup_seconds_)
+    {
+      stuck_recovery_phase_ = StuckRecoveryPhase::TURN;
+      stuck_phase_started_at_ = now;
+      phase_elapsed = 0.0;
+    }
+
+    if (stuck_recovery_phase_ == StuckRecoveryPhase::TURN &&
+      phase_elapsed >= stuck_turn_seconds_)
+    {
+      stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
+      stuck_recovery_finished_once_ = true;
+      last_stuck_recovery_finished_at_ = now;
+      return;
+    }
+
+    if (stuck_recovery_phase_ == StuckRecoveryPhase::BACKUP) {
+      output.linear_x = -std::fabs(stuck_backup_speed_);
+      output.angular_z = 0.0;
+      output.mode = "STUCK_BACKUP";
+      output.detail = "odom shows little progress";
+      return;
+    }
+
+    if (stuck_recovery_phase_ == StuckRecoveryPhase::TURN) {
+      output.linear_x = 0.0;
+      output.angular_z =
+        sign_value(static_cast<double>(stuck_turn_direction_)) * std::fabs(stuck_turn_speed_);
+      output.mode = "STUCK_TURN";
+      output.detail = "turning after backup";
+    }
+  }
+
   void publish_velocity(double linear_x, double angular_z)
   {
     if (cmd_vel_stamped_) {
@@ -820,12 +1036,13 @@ private:
 
     RCLCPP_INFO(
       this->get_logger(),
-      "[%s] enabled=%s imu=%s mag=%s ref=%s tilt=%.1fdeg heading_err=%.1fdeg "
-      "front=%.2fm left=%.2fm right=%.2fm gap=%.2fm target=%.1fdeg cmd=(%.2f, %.2f) %s",
+      "[%s] enabled=%s imu=%s odom=%s ref=%s tilt=%.1fdeg gyro_yaw=%.1fdeg "
+      "front=%.2fm left=%.2fm right=%.2fm gap=%.2fm width=%.2fm target=%.1fdeg "
+      "cmd=(%.2f, %.2f) %s",
       output.mode.c_str(),
       output.enabled_requested ? "yes" : "no",
       output.imu_ready ? "yes" : "no",
-      output.mag_ready ? "yes" : "no",
+      output.odom_ready ? "yes" : "no",
       output.heading_reference_valid ? "yes" : "no",
       output.tilt_deg,
       output.heading_error_deg,
@@ -833,6 +1050,7 @@ private:
       output.scan.left_m,
       output.scan.right_m,
       output.scan.best_gap_m,
+      output.scan.best_gap_width_m,
       rad_to_deg(output.scan.best_angle_rad),
       output.linear_x,
       output.angular_z,
@@ -841,7 +1059,7 @@ private:
 
   const std::string scan_topic_;
   const std::string imu_topic_;
-  const std::string mag_topic_;
+  const std::string odom_topic_;
   const std::string cmd_vel_topic_;
   const bool cmd_vel_stamped_;
   const bool auto_start_;
@@ -873,21 +1091,36 @@ private:
   const bool prefer_left_recovery_;
   const double tilt_stop_deg_;
   const double imu_timeout_seconds_;
-  const double mag_timeout_seconds_;
+  const double gyro_yaw_sign_;
+  const double gyro_angular_deadband_rad_s_;
+  const double gyro_integration_max_dt_seconds_;
+  const double odom_timeout_seconds_;
   const double reverse_heading_threshold_deg_;
   const double reverse_hold_seconds_;
   const double reverse_linear_threshold_;
   const double heading_recovery_turn_speed_;
   const double reverse_resume_threshold_deg_;
-  const double mag_yaw_sign_;
-  const double mag_yaw_offset_deg_;
+  const bool stuck_recovery_enabled_;
+  const double stuck_command_linear_threshold_;
+  const double stuck_odom_linear_threshold_;
+  const double stuck_min_progress_m_;
+  const double stuck_hold_seconds_;
+  const double stuck_backup_speed_;
+  const double stuck_backup_seconds_;
+  const double stuck_turn_speed_;
+  const double stuck_turn_seconds_;
+  const double stuck_cooldown_seconds_;
+  const bool enforce_gap_width_;
+  const double min_passage_width_m_;
+  const double gap_width_search_deg_;
+  const double gap_width_obstacle_max_range_m_;
 
   // ROS2: /cmd_vel 타입이 환경마다 다를 수 있어 Twist와 TwistStamped 퍼블리셔 중 하나만 활성화한다.
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_;
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_stamped_publisher_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_subscription_;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_subscription_;
-  rclcpp::Subscription<sensor_msgs::msg::MagneticField>::SharedPtr mag_subscription_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_subscription_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_enabled_service_;
   rclcpp::TimerBase::SharedPtr control_timer_;
   rclcpp::TimerBase::SharedPtr report_timer_;
@@ -896,19 +1129,31 @@ private:
   sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
   rclcpp::Time latest_scan_time_;
   rclcpp::Time latest_imu_time_;
-  rclcpp::Time latest_mag_time_;
+  rclcpp::Time latest_odom_time_;
   bool enabled_requested_ = false;
   bool imu_ready_ = false;
-  bool mag_ready_ = false;
+  bool odom_ready_ = false;
   bool heading_reference_valid_ = false;
   bool reverse_condition_active_ = false;
   bool reverse_recovery_active_ = false;
+  bool stuck_candidate_active_ = false;
+  bool stuck_recovery_finished_once_ = false;
   double roll_rad_ = 0.0;
   double pitch_rad_ = 0.0;
   double max_tilt_deg_ = 0.0;
   double current_heading_rad_ = 0.0;
   double heading_reference_rad_ = 0.0;
+  double odom_x_ = 0.0;
+  double odom_y_ = 0.0;
+  double odom_linear_speed_ = 0.0;
+  double stuck_candidate_x_ = 0.0;
+  double stuck_candidate_y_ = 0.0;
+  int stuck_turn_direction_ = 1;
+  StuckRecoveryPhase stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
   rclcpp::Time reverse_condition_started_at_;
+  rclcpp::Time stuck_candidate_started_at_;
+  rclcpp::Time stuck_phase_started_at_;
+  rclcpp::Time last_stuck_recovery_finished_at_;
 
   std::mutex output_mutex_;
   DriveOutput last_output_;
