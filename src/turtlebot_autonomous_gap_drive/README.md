@@ -116,6 +116,14 @@ ros2 topic info /cmd_vel
 - `front_window_deg`: 전방 거리 판단에 사용할 반각입니다. 정면 장애물에 민감하게 반응하려면 키웁니다.
 - `side_angle_deg`: 좌우 거리 판단을 몇 도 방향에서 할지 정합니다. 벽과 나란히 달릴 때 기준이 안 맞으면 조정합니다.
 - `side_window_deg`: 좌우 거리 판단에 사용할 반각입니다.
+- `narrow_passage_enabled`: 작은 문틈 뒤에 대각선 벽이 있어 `gap_window_deg`의 최소 거리가 낮게 보이는 경우에도, 폭과 중심 ray 조건이 맞으면 천천히 진입하는 좁은 통로 모드를 켭니다.
+- `narrow_passage_min_center_distance_m`: 좁은 통로 후보의 중심 ray가 최소 이 거리 이상 보여야 합니다. 대각 벽 때문에 갭을 못 들어가면 낮추고, 앞벽에 너무 붙으면 올립니다.
+- `narrow_passage_min_sector_distance_m`: 좁은 통로 후보 주변 섹터 안에서 허용할 최소 LiDAR 거리입니다. 갭 모서리 때문에 막히면 낮추고, 모서리를 치면 올립니다.
+- `narrow_passage_max_angle_deg`: 전방 기준 이 각도 안의 좁은 통로만 특수 후보로 인정합니다. 옆의 작은 틈까지 따라가면 낮춥니다.
+- `narrow_passage_max_width_m`: 이 폭 이하의 measured gap만 좁은 통로로 봅니다. 넓은 공간까지 좁은 통로 모드로 느려지면 낮춥니다.
+- `narrow_passage_min_depth_gain_m`: 중심 ray가 양쪽 경계 평균 거리보다 최소 이만큼 더 깊어야 합니다. 평평한 벽을 갭으로 오인하면 올리고, 실제 작은 갭을 놓치면 낮춥니다.
+- `narrow_passage_bonus`: 좁은 통로 후보 점수 가산점입니다. 작은 갭 대신 옆의 먼 공간을 자꾸 고르면 올리고, 작은 갭에 과하게 집착하면 낮춥니다.
+- `narrow_passage_speed_m_s`: 좁은 통로 모드에서 사용할 전진 속도 상한입니다.
 
 ### 후보 점수와 조향
 
@@ -172,6 +180,7 @@ ros2 topic info /cmd_vel
 - `min_passage_width_m`: 코사인법칙으로 계산한 양쪽 장애물 사이 폭이 이 값 이상일 때만 gap 후보로 인정합니다. 로봇 폭과 여유를 합친 값으로 잡습니다.
 - `gap_width_search_deg`: 후보 방향 기준 좌우 몇 도 안에서 gap의 양쪽 장애물을 찾을지 정합니다.
 - `gap_width_obstacle_max_range_m`: 이 거리 안에 있는 LiDAR 점만 gap 경계 장애물로 봅니다. 너무 멀리 있는 벽까지 경계로 잡으면 낮추고, 경계를 못 찾으면 올립니다.
+- `gap_width_boundary_drop_m`: gap 중심 ray보다 이 거리 이상 가까운 LiDAR 점만 좌우 경계로 봅니다. 갭 뒤 대각 벽 표면을 경계로 오인하면 올리고, 실제 갭 경계를 못 잡으면 낮춥니다.
 
 ## 실전 운용 팁
 

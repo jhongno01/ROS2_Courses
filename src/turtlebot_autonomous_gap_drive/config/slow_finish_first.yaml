@@ -41,6 +41,14 @@ turtlebot_autonomous_gap_drive:
     wall_assist_max_angular_speed: 0.55
     wall_assist_hard_stop_distance_m: 0.09
     wall_assist_gap_width_max_m: 0.36
+    narrow_passage_enabled: true
+    narrow_passage_min_center_distance_m: 0.30
+    narrow_passage_min_sector_distance_m: 0.10
+    narrow_passage_max_angle_deg: 35.0
+    narrow_passage_max_width_m: 0.42
+    narrow_passage_min_depth_gain_m: 0.05
+    narrow_passage_bonus: 0.75
+    narrow_passage_speed_m_s: 0.04
     recovery_turn_speed: 0.75
     recovery_flip_seconds: 4.0
     lost_scan_timeout_seconds: 1.0
@@ -74,3 +82,4 @@ turtlebot_autonomous_gap_drive:
     min_passage_width_m: 0.26
     gap_width_search_deg: 45.0
     gap_width_obstacle_max_range_m: 0.6
+    gap_width_boundary_drop_m: 0.05

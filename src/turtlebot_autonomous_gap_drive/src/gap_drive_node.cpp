@@ -76,10 +76,12 @@ struct ScanSummary
   double left_m = 0.0;
   double right_m = 0.0;
   double best_gap_m = 0.0;
+  double best_center_m = 0.0;
   double best_gap_width_m = 0.0;
   double best_angle_rad = 0.0;
   bool has_safe_gap = false;
   bool has_gap_width = false;
+  bool best_is_narrow_passage = false;
 };
 
 struct DriveOutput
@@ -142,6 +144,20 @@ public:
       this->declare_parameter<double>("wall_assist_hard_stop_distance_m", 0.09)),
     wall_assist_gap_width_max_m_(
       this->declare_parameter<double>("wall_assist_gap_width_max_m", 0.36)),
+    narrow_passage_enabled_(this->declare_parameter<bool>("narrow_passage_enabled", true)),
+    narrow_passage_min_center_distance_m_(
+      this->declare_parameter<double>("narrow_passage_min_center_distance_m", 0.30)),
+    narrow_passage_min_sector_distance_m_(
+      this->declare_parameter<double>("narrow_passage_min_sector_distance_m", 0.10)),
+    narrow_passage_max_angle_deg_(
+      this->declare_parameter<double>("narrow_passage_max_angle_deg", 35.0)),
+    narrow_passage_max_width_m_(
+      this->declare_parameter<double>("narrow_passage_max_width_m", 0.42)),
+    narrow_passage_min_depth_gain_m_(
+      this->declare_parameter<double>("narrow_passage_min_depth_gain_m", 0.05)),
+    narrow_passage_bonus_(this->declare_parameter<double>("narrow_passage_bonus", 0.75)),
+    narrow_passage_speed_m_s_(
+      this->declare_parameter<double>("narrow_passage_speed_m_s", 0.04)),
     recovery_turn_speed_(this->declare_parameter<double>("recovery_turn_speed", 0.75)),
     recovery_flip_seconds_(this->declare_parameter<double>("recovery_flip_seconds", 4.0)),
     lost_scan_timeout_seconds_(this->declare_parameter<double>("lost_scan_timeout_seconds", 1.0)),
@@ -177,7 +193,9 @@ public:
     min_passage_width_m_(this->declare_parameter<double>("min_passage_width_m", 0.24)),
     gap_width_search_deg_(this->declare_parameter<double>("gap_width_search_deg", 45.0)),
     gap_width_obstacle_max_range_m_(
-      this->declare_parameter<double>("gap_width_obstacle_max_range_m", 1.20))
+      this->declare_parameter<double>("gap_width_obstacle_max_range_m", 1.20)),
+    gap_width_boundary_drop_m_(
+      this->declare_parameter<double>("gap_width_boundary_drop_m", 0.05))
   {
     enabled_requested_ = auto_start_;
 
@@ -258,6 +276,16 @@ private:
     double heading_reference_rad = 0.0;
     rclcpp::Time latest_imu_time;
     rclcpp::Time latest_odom_time;
+  };
+
+  struct GapWidthMeasurement
+  {
+    bool measured = false;
+    double width_m = 0.0;
+    double left_angle_rad = 0.0;
+    double left_range_m = 0.0;
+    double right_angle_rad = 0.0;
+    double right_range_m = 0.0;
   };
 
   enum class StuckRecoveryPhase
@@ -494,15 +522,20 @@ private:
     const double left = output.scan.left_m;
     const double right = output.scan.right_m;
     const double front = output.scan.front_m;
+    const bool narrow_passage = output.scan.best_is_narrow_passage;
+    const bool narrow_front_entry =
+      narrow_passage && std::fabs(rad_to_deg(output.scan.best_angle_rad)) <= front_window_deg_;
 
-    if (front <= emergency_stop_distance_m_) {
+    if (front <= emergency_stop_distance_m_ &&
+      (!narrow_front_entry || output.scan.best_center_m <= narrow_passage_min_center_distance_m_))
+    {
       output.linear_x = 0.0;
       output.angular_z = choose_recovery_turn(left, right);
       output.mode = "EMERGENCY_TURN";
       return output;
     }
 
-    if (front <= front_stop_distance_m_ || !output.scan.has_safe_gap) {
+    if ((front <= front_stop_distance_m_ && !narrow_front_entry) || !output.scan.has_safe_gap) {
       output.linear_x = 0.0;
       output.angular_z = choose_recovery_turn(left, right);
       output.mode = "BLOCKED_TURN";
@@ -543,11 +576,16 @@ private:
     const double turn_scale = clamp_value(1.0 - turn_slowdown_gain_ * turn_ratio, 0.25, 1.0);
     const double base_speed =
       min_linear_speed_ + (max_linear_speed_ - min_linear_speed_) * clearance_ratio;
+    const double max_forward_speed =
+      narrow_passage ? std::max(min_linear_speed_, narrow_passage_speed_m_s_) : max_linear_speed_;
 
-    output.linear_x = clamp_value(base_speed * turn_scale, min_linear_speed_, max_linear_speed_);
+    output.linear_x = clamp_value(base_speed * turn_scale, min_linear_speed_, max_forward_speed);
     if (wall_assist_active) {
       output.mode = "WALL_ASSIST";
       output.detail = wall_assist_detail;
+    } else if (narrow_passage) {
+      output.mode = "NARROW_GAP_DRIVE";
+      output.detail = "width-valid narrow passage";
     } else {
       output.mode = "GAP_DRIVE";
     }
@@ -609,30 +647,43 @@ private:
       angle_deg += std::max(1.0, sample_step_deg_))
     {
       const double clearance = min_range_in_sector(scan, angle_deg, gap_window_deg_);
-      if (clearance < safe_gap_distance_m_) {
+
+      double center_range = 0.0;
+      if (!range_at_angle(scan, deg_to_rad(angle_deg), center_range)) {
+        continue;
+      }
+      center_range = sanitize_range(scan, center_range);
+
+      const GapWidthMeasurement gap_width = measure_gap_width(scan, angle_deg, center_range);
+      if (!gap_width_allows(gap_width)) {
         continue;
       }
 
-      double gap_width = 0.0;
-      bool gap_width_measured = false;
-      if (!gap_width_allows(scan, angle_deg, gap_width, gap_width_measured)) {
+      const bool normal_gap = clearance >= safe_gap_distance_m_;
+      const bool narrow_passage =
+        narrow_passage_allows(angle_deg, center_range, clearance, gap_width);
+      if (!normal_gap && !narrow_passage) {
         continue;
       }
 
-      const double capped_clearance = std::min(clearance, target_distance_cap_m_);
+      const double score_clearance = narrow_passage ? center_range : clearance;
+      const double capped_clearance = std::min(score_clearance, target_distance_cap_m_);
       const double forward_penalty =
         forward_bias_weight_ * std::fabs(angle_deg) / std::max(1.0, search_angle_deg_);
       const double heading_bonus =
         compute_heading_alignment_bonus(deg_to_rad(angle_deg), safety);
-      const double score = capped_clearance + heading_bonus - forward_penalty;
+      const double narrow_bonus = narrow_passage ? narrow_passage_bonus_ : 0.0;
+      const double score = capped_clearance + heading_bonus + narrow_bonus - forward_penalty;
 
       if (score > best_score) {
         best_score = score;
         summary.best_gap_m = clearance;
-        summary.best_gap_width_m = gap_width;
+        summary.best_center_m = center_range;
+        summary.best_gap_width_m = gap_width.width_m;
         summary.best_angle_rad = deg_to_rad(angle_deg);
         summary.has_safe_gap = true;
-        summary.has_gap_width = gap_width_measured;
+        summary.has_gap_width = gap_width.measured;
+        summary.best_is_narrow_passage = narrow_passage;
       }
     }
 
@@ -678,46 +729,80 @@ private:
     return min_range;
   }
 
-  bool gap_width_allows(
+  GapWidthMeasurement measure_gap_width(
     const sensor_msgs::msg::LaserScan & scan,
     double center_deg,
-    double & width_m,
-    bool & measured) const
+    double center_range_m) const
   {
-    width_m = 0.0;
-    measured = false;
+    GapWidthMeasurement measurement;
 
-    if (!enforce_gap_width_) {
-      return true;
-    }
-
-    double left_angle_rad = 0.0;
-    double left_range_m = 0.0;
-    double right_angle_rad = 0.0;
-    double right_range_m = 0.0;
-
-    const bool has_left =
-      find_gap_boundary(scan, center_deg, 1.0, left_angle_rad, left_range_m);
-    const bool has_right =
-      find_gap_boundary(scan, center_deg, -1.0, right_angle_rad, right_range_m);
+    const bool has_left = find_gap_boundary(
+      scan, center_deg, center_range_m, 1.0, measurement.left_angle_rad,
+      measurement.left_range_m);
+    const bool has_right = find_gap_boundary(
+      scan, center_deg, center_range_m, -1.0, measurement.right_angle_rad,
+      measurement.right_range_m);
 
     if (!has_left || !has_right) {
+      return measurement;
+    }
+
+    const double angle_between = std::fabs(
+      normalize_angle_rad(measurement.left_angle_rad - measurement.right_angle_rad));
+    const double width_squared =
+      measurement.left_range_m * measurement.left_range_m +
+      measurement.right_range_m * measurement.right_range_m -
+      2.0 * measurement.left_range_m * measurement.right_range_m * std::cos(angle_between);
+
+    measurement.width_m = std::sqrt(std::max(0.0, width_squared));
+    measurement.measured = true;
+    return measurement;
+  }
+
+  bool gap_width_allows(const GapWidthMeasurement & measurement) const
+  {
+    if (!enforce_gap_width_ || !measurement.measured) {
       return true;
     }
 
-    const double angle_between = std::fabs(normalize_angle_rad(left_angle_rad - right_angle_rad));
-    const double width_squared =
-      left_range_m * left_range_m + right_range_m * right_range_m -
-      2.0 * left_range_m * right_range_m * std::cos(angle_between);
+    return measurement.width_m >= min_passage_width_m_;
+  }
 
-    width_m = std::sqrt(std::max(0.0, width_squared));
-    measured = true;
-    return width_m >= min_passage_width_m_;
+  bool narrow_passage_allows(
+    double center_deg,
+    double center_range_m,
+    double sector_clearance_m,
+    const GapWidthMeasurement & measurement) const
+  {
+    if (!narrow_passage_enabled_ || !measurement.measured) {
+      return false;
+    }
+
+    if (std::fabs(center_deg) > narrow_passage_max_angle_deg_) {
+      return false;
+    }
+
+    if (measurement.width_m < min_passage_width_m_ ||
+      measurement.width_m > narrow_passage_max_width_m_)
+    {
+      return false;
+    }
+
+    if (center_range_m < narrow_passage_min_center_distance_m_ ||
+      sector_clearance_m < narrow_passage_min_sector_distance_m_)
+    {
+      return false;
+    }
+
+    const double side_mean_range =
+      0.5 * (measurement.left_range_m + measurement.right_range_m);
+    return center_range_m >= side_mean_range + narrow_passage_min_depth_gain_m_;
   }
 
   bool find_gap_boundary(
     const sensor_msgs::msg::LaserScan & scan,
     double center_deg,
+    double center_range_m,
     double direction,
     double & boundary_angle_rad,
     double & boundary_range_m) const
@@ -734,7 +819,10 @@ private:
       }
 
       const double sanitized = sanitize_range(scan, range);
-      if (sanitized <= gap_width_obstacle_max_range_m_) {
+      const bool close_enough = sanitized <= gap_width_obstacle_max_range_m_;
+      const bool distinct_from_center =
+        sanitized <= center_range_m - std::max(0.0, gap_width_boundary_drop_m_);
+      if (close_enough && distinct_from_center) {
         boundary_angle_rad = angle_rad;
         boundary_range_m = sanitized;
         return true;
@@ -1122,8 +1210,8 @@ private:
     RCLCPP_INFO(
       this->get_logger(),
       "[%s] enabled=%s imu=%s odom=%s ref=%s tilt=%.1fdeg gyro_yaw=%.1fdeg "
-      "front=%.2fm left=%.2fm right=%.2fm gap=%.2fm width=%.2fm target=%.1fdeg "
-      "cmd=(%.2f, %.2f) %s",
+      "front=%.2fm left=%.2fm right=%.2fm gap=%.2fm center=%.2fm width=%.2fm "
+      "narrow=%s target=%.1fdeg cmd=(%.2f, %.2f) %s",
       output.mode.c_str(),
       output.enabled_requested ? "yes" : "no",
       output.imu_ready ? "yes" : "no",
@@ -1135,7 +1223,9 @@ private:
       output.scan.left_m,
       output.scan.right_m,
       output.scan.best_gap_m,
+      output.scan.best_center_m,
       output.scan.best_gap_width_m,
+      output.scan.best_is_narrow_passage ? "yes" : "no",
       rad_to_deg(output.scan.best_angle_rad),
       output.linear_x,
       output.angular_z,
@@ -1178,6 +1268,14 @@ private:
   const double wall_assist_max_angular_speed_;
   const double wall_assist_hard_stop_distance_m_;
   const double wall_assist_gap_width_max_m_;
+  const bool narrow_passage_enabled_;
+  const double narrow_passage_min_center_distance_m_;
+  const double narrow_passage_min_sector_distance_m_;
+  const double narrow_passage_max_angle_deg_;
+  const double narrow_passage_max_width_m_;
+  const double narrow_passage_min_depth_gain_m_;
+  const double narrow_passage_bonus_;
+  const double narrow_passage_speed_m_s_;
   const double recovery_turn_speed_;
   const double recovery_flip_seconds_;
   const double lost_scan_timeout_seconds_;
@@ -1207,6 +1305,7 @@ private:
   const double min_passage_width_m_;
   const double gap_width_search_deg_;
   const double gap_width_obstacle_max_range_m_;
+  const double gap_width_boundary_drop_m_;
 
   // ROS2: /cmd_vel 타입이 환경마다 다를 수 있어 Twist와 TwistStamped 퍼블리셔 중 하나만 활성화한다.
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_;
