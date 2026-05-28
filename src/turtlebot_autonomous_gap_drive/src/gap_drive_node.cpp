@@ -129,7 +129,19 @@ public:
     heading_gain_(this->declare_parameter<double>("heading_gain", 1.55)),
     centering_gain_(this->declare_parameter<double>("centering_gain", 0.55)),
     forward_bias_weight_(this->declare_parameter<double>("forward_bias_weight", 0.55)),
+    heading_alignment_weight_(this->declare_parameter<double>("heading_alignment_weight", 0.35)),
     turn_slowdown_gain_(this->declare_parameter<double>("turn_slowdown_gain", 0.65)),
+    wall_assist_enabled_(this->declare_parameter<bool>("wall_assist_enabled", true)),
+    wall_assist_side_detect_m_(this->declare_parameter<double>("wall_assist_side_detect_m", 0.42)),
+    wall_assist_target_distance_m_(
+      this->declare_parameter<double>("wall_assist_target_distance_m", 0.16)),
+    wall_assist_gain_(this->declare_parameter<double>("wall_assist_gain", 1.8)),
+    wall_assist_max_angular_speed_(
+      this->declare_parameter<double>("wall_assist_max_angular_speed", 0.55)),
+    wall_assist_hard_stop_distance_m_(
+      this->declare_parameter<double>("wall_assist_hard_stop_distance_m", 0.09)),
+    wall_assist_gap_width_max_m_(
+      this->declare_parameter<double>("wall_assist_gap_width_max_m", 0.36)),
     recovery_turn_speed_(this->declare_parameter<double>("recovery_turn_speed", 0.75)),
     recovery_flip_seconds_(this->declare_parameter<double>("recovery_flip_seconds", 4.0)),
     lost_scan_timeout_seconds_(this->declare_parameter<double>("lost_scan_timeout_seconds", 1.0)),
@@ -462,8 +474,9 @@ private:
       return;
     }
 
-    output = compute_drive_output(*scan);
-    annotate_output(output, get_safety_snapshot());
+    safety = get_safety_snapshot();
+    output = compute_drive_output(*scan, safety);
+    annotate_output(output, safety);
     apply_reverse_guard(output, now);
     apply_stuck_recovery(output, now);
 
@@ -471,10 +484,12 @@ private:
     store_output(output);
   }
 
-  DriveOutput compute_drive_output(const sensor_msgs::msg::LaserScan & scan)
+  DriveOutput compute_drive_output(
+    const sensor_msgs::msg::LaserScan & scan,
+    const SafetySnapshot & safety)
   {
     DriveOutput output;
-    output.scan = summarize_scan(scan);
+    output.scan = summarize_scan(scan, safety);
 
     const double left = output.scan.left_m;
     const double right = output.scan.right_m;
@@ -502,11 +517,18 @@ private:
     const double centering_error = left_capped - right_capped;
     const double centering_cmd = centering_gain_ * centering_error;
 
-    double angular_z = heading_cmd + centering_cmd;
+    double wall_assist_cmd = 0.0;
+    std::string wall_assist_detail;
+    const bool wall_assist_active =
+      compute_wall_assist_command(output.scan, wall_assist_cmd, wall_assist_detail);
 
-    if (left < side_stop_distance_m_ && right > left) {
+    double angular_z = heading_cmd + (wall_assist_active ? wall_assist_cmd : centering_cmd);
+
+    const double hard_side_stop =
+      wall_assist_active ? wall_assist_hard_stop_distance_m_ : side_stop_distance_m_;
+    if (left < hard_side_stop && right > left) {
       angular_z = -std::max(0.45, std::fabs(angular_z));
-    } else if (right < side_stop_distance_m_ && left > right) {
+    } else if (right < hard_side_stop && left > right) {
       angular_z = std::max(0.45, std::fabs(angular_z));
     }
 
@@ -523,11 +545,58 @@ private:
       min_linear_speed_ + (max_linear_speed_ - min_linear_speed_) * clearance_ratio;
 
     output.linear_x = clamp_value(base_speed * turn_scale, min_linear_speed_, max_linear_speed_);
-    output.mode = "GAP_DRIVE";
+    if (wall_assist_active) {
+      output.mode = "WALL_ASSIST";
+      output.detail = wall_assist_detail;
+    } else {
+      output.mode = "GAP_DRIVE";
+    }
     return output;
   }
 
-  ScanSummary summarize_scan(const sensor_msgs::msg::LaserScan & scan) const
+  bool compute_wall_assist_command(
+    const ScanSummary & scan,
+    double & wall_cmd,
+    std::string & detail) const
+  {
+    wall_cmd = 0.0;
+    detail.clear();
+
+    if (!wall_assist_enabled_) {
+      return false;
+    }
+
+    const bool both_sides_near =
+      scan.left_m <= wall_assist_side_detect_m_ &&
+      scan.right_m <= wall_assist_side_detect_m_;
+    const bool narrow_measured_gap =
+      scan.has_gap_width &&
+      scan.best_gap_width_m >= min_passage_width_m_ &&
+      scan.best_gap_width_m <= wall_assist_gap_width_max_m_;
+
+    if (!both_sides_near && !narrow_measured_gap) {
+      return false;
+    }
+
+    const bool follow_left = scan.left_m <= scan.right_m;
+    const double wall_distance = follow_left ? scan.left_m : scan.right_m;
+    if (wall_distance > wall_assist_side_detect_m_) {
+      return false;
+    }
+
+    const double distance_error = wall_distance - wall_assist_target_distance_m_;
+    const double direction = follow_left ? 1.0 : -1.0;
+    wall_cmd = clamp_value(
+      direction * wall_assist_gain_ * distance_error,
+      -wall_assist_max_angular_speed_,
+      wall_assist_max_angular_speed_);
+    detail = follow_left ? "dynamic left wall assist" : "dynamic right wall assist";
+    return true;
+  }
+
+  ScanSummary summarize_scan(
+    const sensor_msgs::msg::LaserScan & scan,
+    const SafetySnapshot & safety) const
   {
     ScanSummary summary;
     summary.front_m = min_range_in_sector(scan, 0.0, front_window_deg_);
@@ -553,7 +622,9 @@ private:
       const double capped_clearance = std::min(clearance, target_distance_cap_m_);
       const double forward_penalty =
         forward_bias_weight_ * std::fabs(angle_deg) / std::max(1.0, search_angle_deg_);
-      const double score = capped_clearance - forward_penalty;
+      const double heading_bonus =
+        compute_heading_alignment_bonus(deg_to_rad(angle_deg), safety);
+      const double score = capped_clearance + heading_bonus - forward_penalty;
 
       if (score > best_score) {
         best_score = score;
@@ -566,6 +637,20 @@ private:
     }
 
     return summary;
+  }
+
+  double compute_heading_alignment_bonus(
+    double candidate_angle_rad,
+    const SafetySnapshot & safety) const
+  {
+    if (!safety.heading_reference_valid || heading_alignment_weight_ <= 0.0) {
+      return 0.0;
+    }
+
+    const double candidate_heading_error = normalize_angle_rad(
+      safety.current_heading_rad + candidate_angle_rad - safety.heading_reference_rad);
+    const double error_ratio = clamp_value(std::fabs(candidate_heading_error) / kPi, 0.0, 1.0);
+    return heading_alignment_weight_ * (1.0 - error_ratio);
   }
 
   double min_range_in_sector(
@@ -1084,7 +1169,15 @@ private:
   const double heading_gain_;
   const double centering_gain_;
   const double forward_bias_weight_;
+  const double heading_alignment_weight_;
   const double turn_slowdown_gain_;
+  const bool wall_assist_enabled_;
+  const double wall_assist_side_detect_m_;
+  const double wall_assist_target_distance_m_;
+  const double wall_assist_gain_;
+  const double wall_assist_max_angular_speed_;
+  const double wall_assist_hard_stop_distance_m_;
+  const double wall_assist_gap_width_max_m_;
   const double recovery_turn_speed_;
   const double recovery_flip_seconds_;
   const double lost_scan_timeout_seconds_;
