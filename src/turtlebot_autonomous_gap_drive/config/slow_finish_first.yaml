@@ -12,10 +12,10 @@ turtlebot_autonomous_gap_drive:
     report_period_ms: 1000
 
     max_linear_speed: 0.15
-    min_linear_speed: 0.03
-    max_angular_speed: 0.75
+    min_linear_speed: 0.02
+    max_angular_speed: 0.80
 
-    emergency_stop_distance_m: 0.05
+    emergency_stop_distance_m: 0.08
     front_stop_distance_m: 0.15
     front_slow_distance_m: 0.35
     side_stop_distance_m: 0.10
@@ -24,15 +24,15 @@ turtlebot_autonomous_gap_drive:
 
     search_angle_deg: 105.0
     gap_window_deg: 22.0
-    sample_step_deg: 3.0
+    sample_step_deg: 1.0
     front_window_deg: 18.0
-    side_angle_deg: 70.0
+    side_angle_deg: 75.0
     side_window_deg: 18.0
 
     heading_gain: 1.55
     centering_gain: 0.55
-    forward_bias_weight: 0.55
-    heading_alignment_weight: 0.35
+    forward_bias_weight: 0.8
+    heading_alignment_weight: 0.4
     turn_slowdown_gain: 0.65
     wall_assist_enabled: true
     wall_assist_side_detect_m: 0.42
@@ -56,14 +56,14 @@ turtlebot_autonomous_gap_drive:
     reverse_heading_threshold_deg: 150.0
     reverse_hold_seconds: 2.0
     reverse_linear_threshold: 0.02
-    heading_recovery_turn_speed: 0.60
-    reverse_resume_threshold_deg: 45.0
+    heading_recovery_turn_speed: 0.90
+    reverse_resume_threshold_deg: 20.0
 
     stuck_recovery_enabled: true
     stuck_command_linear_threshold: 0.03
     stuck_odom_linear_threshold: 0.01
     stuck_min_progress_m: 0.03
-    stuck_hold_seconds: 3.0
+    stuck_hold_seconds: 2.0
     stuck_backup_speed: 0.04
     stuck_backup_seconds: 0.8
     stuck_turn_speed: 0.60
@@ -71,6 +71,6 @@ turtlebot_autonomous_gap_drive:
     stuck_cooldown_seconds: 2.0
 
     enforce_gap_width: true
-    min_passage_width_m: 0.24
+    min_passage_width_m: 0.26
     gap_width_search_deg: 45.0
-    gap_width_obstacle_max_range_m: 1.20
+    gap_width_obstacle_max_range_m: 0.6
