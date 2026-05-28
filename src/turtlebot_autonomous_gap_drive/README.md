@@ -80,26 +80,98 @@ ros2 topic info /cmd_vel
 
 `/cmd_vel` 타입이 `geometry_msgs/msg/TwistStamped`로 떠야 하는 구동 환경이면 [config/slow_finish_first.yaml](config/slow_finish_first.yaml)의 `cmd_vel_stamped`를 `true`로 바꿉니다.
 
-## 주요 튜닝값
+## 파라미터 튜닝 가이드
 
 튜닝 파일: [config/slow_finish_first.yaml](config/slow_finish_first.yaml)
 
+### 토픽과 시작 방식
+
+- `scan_topic`: LiDAR `LaserScan` 입력 토픽입니다. 기본은 `/scan`입니다.
+- `imu_topic`: IMU 입력 토픽입니다. gyro yaw 적분과 전복 정지에 씁니다. 기본은 `/imu`입니다.
+- `odom_topic`: odom 입력 토픽입니다. stuck 복구 판단에 씁니다. 기본은 `/odom`입니다.
+- `cmd_vel_topic`: 속도 명령 출력 토픽입니다. 기본은 `/cmd_vel`입니다.
+- `cmd_vel_stamped`: `/cmd_vel` 타입이 `geometry_msgs/msg/TwistStamped`이면 `true`, TurtleBot3 기본 `geometry_msgs/msg/Twist`이면 `false`로 둡니다.
+- `auto_start`: launch 직후 바로 주행하려면 `true`, 서비스 호출 전까지 정지하려면 `false`를 권장합니다.
+- `reset_heading_on_start`: start 서비스가 들어올 때 gyro yaw 기준을 0도로 다시 잡을지 정합니다. 보통 `true`로 둡니다.
+
+### 속도와 기본 안전거리
+
+- `control_period_ms`: 제어 주기입니다. 기본 `100 ms`가 무난하고, 너무 키우면 반응이 늦습니다.
+- `report_period_ms`: 상태 로그 출력 주기입니다. 로그가 너무 많으면 키우세요.
 - `max_linear_speed`: 최대 전진 속도입니다. 완주 우선이면 `0.08 ~ 0.12`를 추천합니다.
-- `front_stop_distance_m`: 이 거리보다 전방이 가까우면 전진을 멈추고 회전합니다.
-- `front_slow_distance_m`: 이 거리 안에서는 속도를 줄입니다.
-- `safe_gap_distance_m`: 빈 공간 후보로 인정할 최소 거리입니다.
-- `search_angle_deg`: 전방 기준 좌우 몇 도까지 빈 공간을 찾을지 정합니다.
-- `heading_gain`: 선택한 빈 공간 쪽으로 회전하는 강도입니다.
-- `centering_gain`: 좌우 벽 사이 중앙을 맞추는 강도입니다.
+- `min_linear_speed`: gap 주행 중 최소 전진 속도입니다. 너무 낮으면 멈칫거리고, 너무 높으면 좁은 곳에서 밀고 들어갑니다.
+- `max_angular_speed`: 회전 명령 상한입니다. 회전이 과격하면 낮추고, 코너를 못 돌면 올립니다.
+- `emergency_stop_distance_m`: 전방이 이 거리 이하이면 즉시 전진을 멈추고 회전합니다.
+- `front_stop_distance_m`: 전방이 이 거리 이하이면 막힌 것으로 보고 회전합니다. 좁은 미션에서 자주 멈추면 낮추고, 충돌하면 올립니다.
+- `front_slow_distance_m`: 전방 거리가 이 값 안으로 들어오면 점진적으로 감속합니다.
+- `side_stop_distance_m`: 좌우 벽이 너무 가까울 때 강제로 반대 방향으로 회전시키는 기본 거리입니다.
+- `safe_gap_distance_m`: 빈 공간 후보로 인정할 최소 거리입니다. 좁은 통로를 너무 못 들어가면 낮추고, 위험한 틈까지 들어가면 올립니다.
+- `target_distance_cap_m`: LiDAR 거리를 점수 계산에 반영할 최대값입니다. 먼 거리 하나가 과하게 유리해지는 것을 막습니다.
+
+### LiDAR 후보 탐색
+
+- `search_angle_deg`: 전방 기준 좌우 몇 도까지 후보 gap을 찾을지 정합니다. 넓히면 옆길 후보를 더 많이 보고, 좁히면 전방 진행성이 커집니다.
+- `gap_window_deg`: 후보 방향 주변 몇 도를 함께 보고 안전성을 판단할지 정합니다. 키우면 보수적이고, 줄이면 좁은 틈을 더 잘 후보로 잡습니다.
+- `sample_step_deg`: LiDAR 각도를 몇 도 간격으로 샘플링할지 정합니다. 줄이면 촘촘하지만 계산이 늘고, 키우면 빠르지만 듬성해집니다.
+- `front_window_deg`: 전방 거리 판단에 사용할 반각입니다. 정면 장애물에 민감하게 반응하려면 키웁니다.
+- `side_angle_deg`: 좌우 거리 판단을 몇 도 방향에서 할지 정합니다. 벽과 나란히 달릴 때 기준이 안 맞으면 조정합니다.
+- `side_window_deg`: 좌우 거리 판단에 사용할 반각입니다.
+
+### 후보 점수와 조향
+
+- `heading_gain`: 선택된 gap 방향으로 회전하는 강도입니다. 목표 gap을 못 따라가면 올리고, 좌우로 흔들리면 낮춥니다.
+- `centering_gain`: 좌우 벽 사이 중앙으로 가려는 강도입니다. 벽에서 너무 멀어져 출구를 놓치면 낮추고, 한쪽 벽에 자주 붙으면 올립니다.
+- `forward_bias_weight`: 전방에서 많이 벗어난 후보에 주는 감점입니다. 직진성을 높이고 싶으면 올리고, 옆 출구를 더 잘 찾게 하려면 낮춥니다.
+- `heading_alignment_weight`: 후보 gap 중 start yaw 기준 heading 오차가 작은 방향에 주는 가산점입니다. 역방향/옆길 선택을 줄이고 싶으면 올리고, 필요한 우회까지 막으면 낮춥니다.
+- `turn_slowdown_gain`: 회전량이 클수록 전진 속도를 줄이는 정도입니다. 코너에서 벽을 치면 올리고, 너무 느리면 낮춥니다.
 - `recovery_turn_speed`: 막혔을 때 제자리 회전 속도입니다.
-- `tilt_stop_deg`: IMU roll/pitch 중 큰 값이 이 각도를 넘으면 정지합니다.
+- `recovery_flip_seconds`: 같은 방향으로 이 시간 이상 회전해도 못 빠져나오면 회전 방향을 뒤집습니다.
+- `lost_scan_timeout_seconds`: 이 시간 이상 `/scan`이 갱신되지 않으면 정지합니다.
+- `prefer_left_recovery`: 좌우 여유가 비슷할 때 복구 회전 기본 방향입니다.
+
+### Dynamic Wall Assist
+
+- `wall_assist_enabled`: 좁은 양벽 구간에서 중앙 정렬 대신 가까운 벽과 목표 거리를 유지하는 보조 제어를 켭니다. 좌/우수법 금지 기준이 엄격하면 `false`로 끄세요.
+- `wall_assist_side_detect_m`: 좌우 벽이 이 거리 안에 있으면 좁은 구간으로 보고 wall assist 후보가 됩니다.
+- `wall_assist_target_distance_m`: 따라갈 벽과 유지하려는 목표 거리입니다. 벽에 더 붙어야 하면 낮추고, 충돌하면 올립니다.
+- `wall_assist_gain`: 목표 거리 오차를 회전 명령으로 바꾸는 강도입니다. 벽을 못 따라가면 올리고, 흔들리면 낮춥니다.
+- `wall_assist_max_angular_speed`: wall assist가 낼 수 있는 최대 회전 속도입니다.
+- `wall_assist_hard_stop_distance_m`: wall assist 중에도 이 거리보다 벽이 가까우면 강제로 멀어지게 합니다.
+- `wall_assist_gap_width_max_m`: 측정된 gap 폭이 이 값 이하이면 좁은 통로로 보고 wall assist를 켤 수 있습니다.
+
+### IMU, Gyro, 역방향 복구
+
+- `tilt_stop_deg`: IMU roll/pitch 중 큰 값이 이 각도를 넘으면 정지합니다. 넘어짐 감지가 너무 민감하면 올리고, 늦으면 낮춥니다.
+- `imu_timeout_seconds`: 이 시간 이상 IMU가 갱신되지 않으면 정지합니다.
 - `gyro_yaw_sign`: gyro yaw 방향이 실제 회전 방향과 반대일 때 `-1.0`으로 바꿉니다.
+- `gyro_angular_deadband_rad_s`: 이 값보다 작은 z축 각속도는 노이즈로 보고 적분하지 않습니다. 정지 중 yaw가 흐르면 올립니다.
+- `gyro_integration_max_dt_seconds`: IMU 메시지 간격이 이 값보다 크면 그 구간은 적분하지 않습니다.
+- `odom_timeout_seconds`: stuck 판단에 사용할 `/odom` timeout입니다.
 - `reverse_heading_threshold_deg`: start 시 reset한 gyro yaw에서 이 각도 이상 벗어난 채 전진하면 역방향 후보로 봅니다.
 - `reverse_hold_seconds`: 역방향 후보 상태가 이 시간 이상 지속되면 복구 회전에 들어갑니다.
-- `stuck_hold_seconds`: 전진 명령 대비 `/odom` 움직임이 거의 없는 상태가 이 시간 이상이면 stuck 복구에 들어갑니다.
-- `stuck_backup_speed`, `stuck_backup_seconds`: stuck 복구 때 후진 속도와 시간입니다.
-- `min_passage_width_m`: 후보 방향 양쪽 장애물 사이 틈이 이 값 이상일 때만 gap 후보로 인정합니다.
-- `gap_width_search_deg`: 후보 방향 기준 좌우 몇 도 안에서 틈의 양쪽 장애물을 찾을지 정합니다.
+- `reverse_linear_threshold`: 전진 명령이 이 값보다 클 때만 역방향 주행으로 판단합니다.
+- `heading_recovery_turn_speed`: 역방향 복구 때 기준 yaw 쪽으로 제자리 회전하는 속도입니다.
+- `reverse_resume_threshold_deg`: gyro yaw 오차가 이 각도 이하로 줄면 역방향 복구를 끝냅니다.
+
+### Stuck 복구
+
+- `stuck_recovery_enabled`: 전진 명령이 있는데 `/odom` 움직임이 거의 없을 때 후진/회전 복구를 켭니다.
+- `stuck_command_linear_threshold`: 전진 명령이 이 값보다 클 때만 stuck 판단을 시작합니다.
+- `stuck_odom_linear_threshold`: `/odom` 속도가 이 값보다 작으면 거의 못 움직이는 상태로 봅니다.
+- `stuck_min_progress_m`: stuck 판단 시간 동안 이 거리보다 덜 움직이면 stuck 후보로 유지합니다.
+- `stuck_hold_seconds`: stuck 후보 상태가 이 시간 이상 지속되면 복구에 들어갑니다.
+- `stuck_backup_speed`: stuck 복구 때 후진 속도입니다. YAML 값은 양수로 두면 코드에서 후진 방향으로 씁니다.
+- `stuck_backup_seconds`: 후진 지속 시간입니다.
+- `stuck_turn_speed`: 후진 후 제자리 회전 속도입니다.
+- `stuck_turn_seconds`: 후진 후 제자리 회전 시간입니다.
+- `stuck_cooldown_seconds`: stuck 복구 직후 다시 stuck 복구에 들어가기 전 대기 시간입니다.
+
+### Gap 폭 필터
+
+- `enforce_gap_width`: 후보 방향 양쪽 장애물 사이 폭을 계산해서 좁은 틈을 거를지 정합니다.
+- `min_passage_width_m`: 코사인법칙으로 계산한 양쪽 장애물 사이 폭이 이 값 이상일 때만 gap 후보로 인정합니다. 로봇 폭과 여유를 합친 값으로 잡습니다.
+- `gap_width_search_deg`: 후보 방향 기준 좌우 몇 도 안에서 gap의 양쪽 장애물을 찾을지 정합니다.
+- `gap_width_obstacle_max_range_m`: 이 거리 안에 있는 LiDAR 점만 gap 경계 장애물로 봅니다. 너무 멀리 있는 벽까지 경계로 잡으면 낮추고, 경계를 못 찾으면 올립니다.
 
 ## 실전 운용 팁
 

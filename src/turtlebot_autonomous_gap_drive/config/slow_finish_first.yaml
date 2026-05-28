@@ -32,7 +32,15 @@ turtlebot_autonomous_gap_drive:
     heading_gain: 1.55
     centering_gain: 0.55
     forward_bias_weight: 0.55
+    heading_alignment_weight: 0.35
     turn_slowdown_gain: 0.65
+    wall_assist_enabled: true
+    wall_assist_side_detect_m: 0.42
+    wall_assist_target_distance_m: 0.16
+    wall_assist_gain: 1.8
+    wall_assist_max_angular_speed: 0.55
+    wall_assist_hard_stop_distance_m: 0.09
+    wall_assist_gap_width_max_m: 0.36
     recovery_turn_speed: 0.75
     recovery_flip_seconds: 4.0
     lost_scan_timeout_seconds: 1.0
