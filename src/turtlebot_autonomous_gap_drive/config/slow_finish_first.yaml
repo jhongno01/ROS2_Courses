@@ -2,7 +2,7 @@ turtlebot_autonomous_gap_drive:
   ros__parameters:
     scan_topic: /scan
     imu_topic: /imu
-    mag_topic: /mag
+    odom_topic: /odom
     cmd_vel_topic: /cmd_vel
     cmd_vel_stamped: false
     auto_start: false
@@ -40,7 +40,10 @@ turtlebot_autonomous_gap_drive:
 
     tilt_stop_deg: 60.0
     imu_timeout_seconds: 1.0
-    mag_timeout_seconds: 1.0
+    gyro_yaw_sign: 1.0
+    gyro_angular_deadband_rad_s: 0.01
+    gyro_integration_max_dt_seconds: 0.25
+    odom_timeout_seconds: 1.0
 
     reverse_heading_threshold_deg: 150.0
     reverse_hold_seconds: 2.0
@@ -48,5 +51,18 @@ turtlebot_autonomous_gap_drive:
     heading_recovery_turn_speed: 0.60
     reverse_resume_threshold_deg: 45.0
 
-    mag_yaw_sign: 1.0
-    mag_yaw_offset_deg: 0.0
+    stuck_recovery_enabled: true
+    stuck_command_linear_threshold: 0.03
+    stuck_odom_linear_threshold: 0.01
+    stuck_min_progress_m: 0.03
+    stuck_hold_seconds: 3.0
+    stuck_backup_speed: 0.04
+    stuck_backup_seconds: 0.8
+    stuck_turn_speed: 0.60
+    stuck_turn_seconds: 1.0
+    stuck_cooldown_seconds: 2.0
+
+    enforce_gap_width: true
+    min_passage_width_m: 0.24
+    gap_width_search_deg: 45.0
+    gap_width_obstacle_max_range_m: 1.20
