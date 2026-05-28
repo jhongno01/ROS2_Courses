@@ -1,8 +1,12 @@
 turtlebot_autonomous_gap_drive:
   ros__parameters:
     scan_topic: /scan
+    imu_topic: /imu
+    mag_topic: /mag
     cmd_vel_topic: /cmd_vel
     cmd_vel_stamped: false
+    auto_start: false
+    reset_heading_on_start: true
 
     control_period_ms: 100
     report_period_ms: 1000
@@ -33,3 +37,16 @@ turtlebot_autonomous_gap_drive:
     recovery_flip_seconds: 4.0
     lost_scan_timeout_seconds: 1.0
     prefer_left_recovery: true
+
+    tilt_stop_deg: 60.0
+    imu_timeout_seconds: 1.0
+    mag_timeout_seconds: 1.0
+
+    reverse_heading_threshold_deg: 150.0
+    reverse_hold_seconds: 2.0
+    reverse_linear_threshold: 0.02
+    heading_recovery_turn_speed: 0.60
+    reverse_resume_threshold_deg: 45.0
+
+    mag_yaw_sign: 1.0
+    mag_yaw_offset_deg: 0.0
