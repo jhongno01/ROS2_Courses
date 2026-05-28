@@ -7,16 +7,16 @@ turtlebot_autonomous_gap_drive:
     control_period_ms: 100
     report_period_ms: 1000
 
-    max_linear_speed: 0.10
+    max_linear_speed: 0.15
     min_linear_speed: 0.03
-    max_angular_speed: 1.25
+    max_angular_speed: 0.75
 
-    emergency_stop_distance_m: 0.22
-    front_stop_distance_m: 0.34
-    front_slow_distance_m: 0.85
-    side_stop_distance_m: 0.18
-    safe_gap_distance_m: 0.45
-    target_distance_cap_m: 2.50
+    emergency_stop_distance_m: 0.05
+    front_stop_distance_m: 0.15
+    front_slow_distance_m: 0.35
+    side_stop_distance_m: 0.10
+    safe_gap_distance_m: 0.35
+    target_distance_cap_m: 1.00
 
     search_angle_deg: 105.0
     gap_window_deg: 22.0
