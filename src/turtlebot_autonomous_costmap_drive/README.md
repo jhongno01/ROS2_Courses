@@ -1,0 +1,219 @@
+# turtlebot_autonomous_costmap_drive
+
+`turtlebot_autonomous_costmap_drive`는 기존 `turtlebot_autonomous_gap_drive`를 바탕으로 만든 local costmap 기반 자율주행 패키지입니다. 목표는 빠른 기록보다 안정적인 완주입니다. SLAM/Nav2 전체를 붙이지 않고도 `/scan`, `/imu`, `/odom`만으로 짧은 시간 누적 costmap을 만들고, 그 위에서 후보 궤적을 평가해 `/cmd_vel`을 publish합니다.
+
+기존 gap-drive는 LaserScan 한 프레임에서 가장 좋은 gap 방향을 고르는 reactive 방식입니다. 이 패키지는 같은 센서와 안전장치를 쓰지만, 작은 장애물 끝점, 대각 벽 뒤 gap, 좁은 문틈, C/U자 구조처럼 한 프레임 ray만으로 애매한 상황을 local costmap과 footprint collision check로 판단합니다.
+
+상세한 코드 흐름은 [Flow.md](Flow.md)에, gap-drive 대비 상황별 동작 차이는 [SCENARIO_COMPARISON.md](SCENARIO_COMPARISON.md)에 정리되어 있습니다.
+
+## 추천 방향
+
+- 1순위: `costmap_drive.launch.py`로 저속 완주 테스트
+- 2순위: RViz에서 `/costmap_drive/local_costmap`과 `/costmap_drive/trajectory_markers`를 보며 튜닝
+- 3순위: rosbag replay로 기존 `gap_drive`와 같은 상황의 `/cmd_vel`과 mode 로그 비교
+
+이 패키지는 ROS2 Foxy 호환을 목표로 C++14와 기본 message 패키지 위주로 작성했습니다. Nav2, AMCL, saved map, RealSense depth는 v1 범위에 넣지 않았습니다.
+
+## 동작 개요
+
+노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. `/scan`의 유효 hit point를 `/odom` pose 기준으로 짧게 저장하고, 제어 주기마다 `base_link` 기준 rolling local costmap으로 다시 변환합니다. 현재 scan ray는 free space로 표시하고, 저장된 obstacle point는 occupied cell로 표시한 뒤 `robot_radius_m + inflation_radius_m`만큼 cost를 퍼뜨립니다.
+
+이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수를 합쳐 가장 좋은 궤적을 선택합니다.
+
+기본 출력은 TurtleBot3 Foxy에서 흔히 쓰는 `geometry_msgs/msg/Twist` 타입의 `/cmd_vel`입니다. 기존 수업 코드처럼 `/cmd_vel`이 `geometry_msgs/msg/TwistStamped` 타입이어야 하는 환경이면 YAML에서 `cmd_vel_stamped: true`로 바꾸세요.
+
+## 빌드
+
+워크스페이스 루트에서 실행합니다.
+
+```bash
+colcon build --packages-select turtlebot_autonomous_costmap_drive
+source install/setup.bash
+```
+
+## 실행 방법
+
+터틀봇 bringup과 LiDAR driver가 먼저 실행되어 있어야 합니다.
+
+```bash
+source install/setup.bash
+ros2 launch turtlebot_autonomous_costmap_drive costmap_drive.launch.py
+```
+
+노드는 기본값 `auto_start: false`라서 launch 직후에는 정지 상태입니다. 다음 서비스로 주행을 시작하고 멈춥니다.
+
+```bash
+ros2 service call /turtlebot_autonomous_costmap_drive/set_enabled std_srvs/srv/SetBool "{data: true}"
+ros2 service call /turtlebot_autonomous_costmap_drive/set_enabled std_srvs/srv/SetBool "{data: false}"
+```
+
+## 실행 전 확인
+
+```bash
+ros2 topic list
+ros2 topic echo /scan --once
+ros2 topic echo /imu --once
+ros2 topic echo /odom --once
+ros2 topic info /cmd_vel
+```
+
+RViz에서 함께 보면 좋은 토픽입니다.
+
+```text
+/costmap_drive/local_costmap
+/costmap_drive/trajectory_markers
+```
+
+## 주행 모드
+
+- `STOPPED`: 서비스 start 전 또는 stop 요청 후 0속도입니다.
+- `WAIT_SENSORS`: IMU 또는 odom이 없거나 timeout입니다.
+- `WAIT_SCAN`: 아직 LiDAR scan을 받지 못했습니다.
+- `SCAN_TIMEOUT`: 마지막 scan이 너무 오래되었습니다.
+- `TILT_STOP`: IMU roll/pitch가 `tilt_stop_deg`를 넘었습니다.
+- `COSTMAP_DRIVE`: local costmap에서 가장 낮은 cost의 전진 궤적을 따라갑니다.
+- `NARROW_COSTMAP_DRIVE`: 양벽이 가까운 통로를 저속으로 통과합니다.
+- `BLOCKED_TURN`: 안전한 전진 궤적이 없어 제자리 회전합니다.
+- `EMERGENCY_TURN`: 전방 장애물이 매우 가까워 즉시 전진을 멈추고 회전합니다.
+- `REVERSE_WARN`: 기준 heading 반대 방향으로 전진 중이지만 아직 hold 시간 전입니다.
+- `REVERSE_RECOVERY`: 기준 heading 쪽으로 제자리 회전합니다.
+- `STUCK_BACKUP`: 전진 명령이 있는데 odom상 진행이 없어 짧게 후진합니다.
+- `STUCK_TURN`: 후진 후 더 여유 있는 방향으로 제자리 회전합니다.
+
+## 튜닝 기본 방향
+
+완주 우선 기본 전략은 아래 순서입니다.
+
+1. 충돌이 있으면 속도보다 footprint와 inflation을 먼저 봅니다.
+2. 좁은 통로를 못 지나가면 `robot_radius_m`, `inflation_radius_m`, `lethal_cost_threshold`를 한 번에 크게 바꾸지 말고 하나씩 낮춥니다.
+3. 코너에서 벽을 치면 `front_slow_distance_m`, `cost_obstacle_weight`, `turn_slowdown_gain`을 올립니다.
+4. 열린 공간에서 너무 느리면 `max_linear_speed`와 `progress_reward_weight`를 조금 올립니다.
+5. 좌우 흔들림은 `cost_smooth_weight`, `cost_turn_weight`, `max_angular_speed`로 잡습니다.
+6. C/U자 구조에서 늦게 빠져나오면 `trajectory_horizon_s`, `grid_forward_m`, `obstacle_memory_seconds`를 조금 올립니다.
+
+튜닝은 한 번에 하나씩 바꾸고 같은 Gazebo world 또는 같은 rosbag replay에서 비교하세요. costmap 방식은 파라미터끼리 상호작용이 크기 때문에 여러 값을 동시에 바꾸면 원인 파악이 어려워집니다.
+
+## 파라미터 상세 설명
+
+튜닝 파일: [config/complete_first.yaml](config/complete_first.yaml)
+
+### 토픽과 시작 방식
+
+- `scan_topic`: LiDAR `LaserScan` 입력 토픽입니다. 기본은 `/scan`입니다.
+- `imu_topic`: IMU 입력 토픽입니다. 기울기 정지와 gyro yaw 적분에 씁니다.
+- `odom_topic`: odom 입력 토픽입니다. obstacle memory의 좌표 기준과 stuck 복구에 씁니다.
+- `cmd_vel_topic`: 속도 명령 출력 토픽입니다. 기본은 `/cmd_vel`입니다.
+- `cmd_vel_stamped`: 출력 타입을 `TwistStamped`로 바꿀지 정합니다. TurtleBot3 기본은 `false`입니다.
+- `local_costmap_topic`: RViz 확인용 local occupancy grid 출력 토픽입니다.
+- `trajectory_marker_topic`: 선택된 후보 궤적 marker 출력 토픽입니다.
+- `costmap_frame_id`: local costmap과 marker의 frame입니다. 기본은 `base_link`입니다.
+- `auto_start`: launch 직후 바로 주행할지 정합니다. 실제 로봇에서는 `false`를 권장합니다.
+- `reset_heading_on_start`: start 서비스가 들어올 때 gyro yaw 기준을 0도로 다시 잡을지 정합니다.
+- `require_odom`: odom이 준비되지 않으면 주행을 막을지 정합니다. costmap memory와 stuck 복구를 위해 `true`를 권장합니다.
+
+### 속도와 복구 회전
+
+- `control_period_ms`: 제어 주기입니다. 기본 100ms가 무난합니다.
+- `report_period_ms`: 상태 로그 출력 주기입니다.
+- `max_linear_speed`: 일반 costmap 주행 최대 선속도입니다. 완주 우선이면 `0.08 ~ 0.12`를 추천합니다.
+- `min_linear_speed`: 전진 후보의 최소 선속도입니다. 너무 낮으면 멈칫거리고, 너무 높으면 좁은 곳에서 밀고 들어갑니다.
+- `max_angular_speed`: 후보 궤적 샘플링과 최종 회전 속도 상한입니다.
+- `recovery_turn_speed`: `BLOCKED_TURN` 또는 `EMERGENCY_TURN`에서 쓰는 제자리 회전 속도입니다.
+- `recovery_flip_seconds`: 같은 방향으로 이 시간 이상 회전해도 못 빠져나오면 회전 방향을 뒤집습니다.
+- `prefer_left_recovery`: 좌우 여유가 비슷할 때 기본 회전 방향입니다.
+
+### Scan 해석과 기본 거리
+
+- `emergency_stop_distance_m`: 전방 최단거리가 이 값보다 가까우면 즉시 전진 후보 평가를 건너뛰고 회전합니다.
+- `front_stop_distance_m`: 이 거리 이하에서는 전진 속도 계산이 가장 보수적으로 내려갑니다.
+- `front_slow_distance_m`: 전방 거리가 이 값 안에 들어오면 점진적으로 감속합니다.
+- `side_angle_deg`: 좌우 거리 판단에 사용할 중심 각도입니다.
+- `side_window_deg`: 좌우 거리 판단 섹터 반각입니다.
+- `front_window_deg`: 전방 거리 판단 섹터 반각입니다.
+- `scan_sample_step_deg`: scan ray를 몇 도 간격으로 costmap에 반영할지 정합니다. 낮추면 촘촘하지만 계산량이 늘어납니다.
+- `scan_obstacle_max_range_m`: obstacle memory에 넣을 최대 LiDAR 거리입니다. 너무 크면 먼 벽까지 로컬 판단을 방해할 수 있습니다.
+- `raytrace_max_range_m`: 현재 scan ray로 free space를 표시할 최대 거리입니다.
+- `lost_scan_timeout_seconds`: 마지막 scan이 이 시간 이상 갱신되지 않으면 정지합니다.
+
+### Local Costmap
+
+- `grid_resolution_m`: costmap 한 cell의 크기입니다. 작을수록 정밀하지만 계산량이 늘어납니다.
+- `grid_forward_m`: 로봇 앞쪽으로 볼 costmap 거리입니다. 코너와 함정을 더 일찍 보려면 올립니다.
+- `grid_back_m`: 로봇 뒤쪽으로 유지할 costmap 거리입니다. 후진 복구나 회전 중 뒤쪽 장애물을 보려면 올립니다.
+- `grid_half_width_m`: 좌우 costmap 반폭입니다. 좁으면 회전 후보가 map 밖으로 나가 reject될 수 있습니다.
+- `obstacle_memory_seconds`: scan hit point를 기억할 시간입니다. 짧으면 반응성은 좋지만 구조 기억이 약하고, 길면 지나간 장애물이 오래 남습니다.
+- `obstacle_memory_max_points`: obstacle memory 최대 point 수입니다. 오래 주행할 때 메모리와 계산량을 제한합니다.
+- `robot_radius_m`: 원형 footprint 반지름입니다. 실제 TurtleBot3 Burger 폭과 여유를 합쳐 잡습니다.
+- `inflation_radius_m`: obstacle 주변에 추가로 cost를 퍼뜨릴 거리입니다. 벽을 치면 올리고, 좁은 문틈을 못 지나가면 낮춥니다.
+- `lethal_cost_threshold`: 후보 궤적이 이 cost 이상인 cell을 밟으면 collision으로 reject합니다. 낮추면 보수적이고, 높이면 좁은 곳을 더 통과합니다.
+- `unknown_cell_cost`: unknown cell을 지나갈 때 부여할 cost입니다.
+- `allow_unknown_trajectory`: unknown cell 통과 후보를 허용할지 정합니다. 실제 완주 우선에서는 `true`가 덜 답답합니다.
+
+### 후보 궤적 점수
+
+- `trajectory_horizon_s`: 후보 궤적을 몇 초 앞까지 예측할지 정합니다. 길면 코너와 함정을 일찍 보지만 좁은 공간에서 보수적입니다.
+- `trajectory_dt_s`: 궤적 예측 샘플 간격입니다. 낮추면 정밀하지만 계산량이 늘어납니다.
+- `angular_sample_count`: `-max_angular_speed`부터 `+max_angular_speed`까지 몇 개 후보를 볼지 정합니다. 홀수로 두면 0 회전 후보가 포함되기 쉽습니다.
+- `turn_slowdown_gain`: 회전량이 클수록 선속도를 낮추는 정도입니다.
+- `progress_reward_weight`: 앞으로 나아간 거리에 주는 보상입니다. 올리면 더 적극적으로 전진합니다.
+- `cost_obstacle_weight`: obstacle/inflation cost 감점입니다. 벽을 스치면 올리고, 너무 소극적이면 낮춥니다.
+- `cost_unknown_weight`: unknown cell 비율 감점입니다. 올리면 관측된 free space를 더 선호합니다.
+- `cost_turn_weight`: 큰 회전량 감점입니다. 올리면 직진성이 강해지고, 낮추면 코너를 더 적극적으로 돕니다.
+- `cost_smooth_weight`: 직전 `angular_z`와의 차이 감점입니다. 올리면 좌우 흔들림이 줄지만 반응이 느려질 수 있습니다.
+- `cost_lateral_weight`: 최종 궤적이 좌우로 벗어나는 정도의 감점입니다. 올리면 중앙 진행성이 강해집니다.
+- `heading_alignment_weight`: start 시 reset한 gyro heading과 후보 최종 heading 차이 감점입니다. 역방향 진행을 줄이는 데 도움됩니다.
+
+### 좁은 통로 모드
+
+- `narrow_corridor_enabled`: 양쪽 벽이 가까울 때 저속 좁은 통로 모드를 쓸지 정합니다.
+- `narrow_corridor_width_m`: 좌우 거리 합이 이 값 이하이면 좁은 통로 후보로 봅니다.
+- `narrow_corridor_side_detect_m`: 양쪽 벽이 각각 이 거리 안에 있어야 좁은 통로로 봅니다.
+- `narrow_corridor_speed_m_s`: `NARROW_COSTMAP_DRIVE`에서 사용할 전진 속도 상한입니다.
+
+### IMU, Gyro, 역방향 복구
+
+- `tilt_stop_deg`: IMU roll/pitch 중 큰 값이 이 각도를 넘으면 정지합니다.
+- `imu_timeout_seconds`: IMU가 이 시간 이상 갱신되지 않으면 정지합니다.
+- `gyro_yaw_sign`: gyro yaw 방향이 실제와 반대이면 `-1.0`으로 바꿉니다.
+- `gyro_angular_deadband_rad_s`: 작은 z축 각속도를 노이즈로 무시하는 deadband입니다.
+- `gyro_integration_max_dt_seconds`: IMU 메시지 간격이 이 값보다 크면 그 구간은 yaw 적분하지 않습니다.
+- `odom_timeout_seconds`: odom timeout 기준입니다.
+- `reverse_heading_threshold_deg`: start heading 반대 방향으로 이 각도 이상 벗어나 전진하면 역방향 후보로 봅니다.
+- `reverse_hold_seconds`: 역방향 후보가 이 시간 이상 지속되면 복구 회전에 들어갑니다.
+- `reverse_linear_threshold`: 전진 명령이 이 값보다 클 때만 역방향 주행으로 판단합니다.
+- `heading_recovery_turn_speed`: 역방향 복구 때 기준 heading 쪽으로 도는 속도입니다.
+- `reverse_resume_threshold_deg`: heading 오차가 이 값 이하가 되면 역방향 복구를 끝냅니다.
+
+### Stuck 복구
+
+- `stuck_recovery_enabled`: 전진 명령이 있는데 odom상 진행이 없을 때 후진/회전 복구를 켭니다.
+- `stuck_command_linear_threshold`: 전진 명령이 이 값보다 클 때만 stuck 판단을 시작합니다.
+- `stuck_odom_linear_threshold`: odom 속도가 이 값보다 낮으면 거의 못 움직이는 상태로 봅니다.
+- `stuck_min_progress_m`: stuck 판단 시간 동안 이 거리보다 덜 움직이면 stuck 후보로 유지합니다.
+- `stuck_hold_seconds`: stuck 후보가 이 시간 이상 지속되면 복구를 시작합니다.
+- `stuck_backup_speed`: stuck 복구 때 후진 속도입니다. YAML 값은 양수로 두면 코드에서 후진 방향으로 씁니다.
+- `stuck_backup_seconds`: 후진 지속 시간입니다.
+- `stuck_turn_speed`: 후진 후 제자리 회전 속도입니다.
+- `stuck_turn_seconds`: 후진 후 제자리 회전 시간입니다.
+- `stuck_cooldown_seconds`: stuck 복구 직후 다시 stuck 복구에 들어가기 전 대기 시간입니다.
+
+## gap_drive 대비 핵심 차이
+
+- `gap_drive`: 한 프레임 scan에서 후보 angle의 섹터 최소거리와 gap 폭을 계산합니다.
+- `costmap_drive`: 짧게 누적한 obstacle memory와 현재 free ray로 local grid를 만들고, 로봇 footprint가 지나갈 수 있는 후보 궤적을 평가합니다.
+- `gap_drive`: 작은 틈 뒤 대각 벽처럼 섹터 최소거리 하나가 낮으면 후보가 막힐 수 있습니다.
+- `costmap_drive`: inflated obstacle 사이에 corridor가 남으면 저속으로 통과하고, footprint가 닿는 후보만 reject합니다.
+- `gap_drive`: 후보 중심 ray가 통과 가능해도 로봇 몸체가 장애물 끝에 걸릴 수 있습니다.
+- `costmap_drive`: 원형 footprint collision check로 edge clipping을 줄입니다.
+
+## rosbag 비교 팁
+
+기존 bag을 replay하면서 새 노드의 출력이 실제 `/cmd_vel`과 섞이지 않게 하려면 별도 YAML을 만들어 `cmd_vel_topic: /cmd_vel_costmap_test`로 바꿔 실행하세요.
+
+```bash
+ros2 bag play ~/tb3_bags/candidate_run_01 --loop
+ros2 launch turtlebot_autonomous_costmap_drive costmap_drive.launch.py params_file:=/path/to/replay_costmap.yaml
+ros2 service call /turtlebot_autonomous_costmap_drive/set_enabled std_srvs/srv/SetBool "{data: true}"
+```
+
+비교할 값은 mode, `cmd=(linear, angular)`, `traj=evaluated/rejected`, `score`, `avg_cost`, `unknown`, RViz의 selected trajectory입니다.

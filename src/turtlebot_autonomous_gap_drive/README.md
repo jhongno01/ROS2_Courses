@@ -14,11 +14,13 @@ Jetson Nano에서 ROS2 Foxy를 맞춰야 한다면 이 패키지는 C++14와 Fox
 
 ## 동작 개요
 
-노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. 전방 거리가 충분하면 가장 넓고 안전한 빈 공간을 향해 전진하고, 전방이 막히면 좌우 중 더 여유 있는 방향으로 제자리 회전합니다. 기본 속도는 TurtleBot3 Burger 최대 속도보다 낮은 `0.10 m/s`로 설정했습니다.
+노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. 전방 거리가 충분하면 가장 넓고 안전한 빈 공간을 향해 전진하고, 전방이 막히면 좌우 중 더 여유 있는 방향으로 제자리 회전합니다. 현재 튜닝 YAML은 완주 테스트용으로 `max_linear_speed: 0.15 m/s`까지 허용하지만, 장애물 끝에 걸리거나 회전 반경이 커지면 `0.10 ~ 0.12 m/s`로 낮추는 쪽이 안전합니다.
 
 기본값은 `auto_start: false`라서 launch 직후에는 0속도를 publish하며 대기합니다. start 서비스가 호출되면 gyro yaw 적분값을 0도로 reset하고 주행을 시작합니다. 주행 중 기울기가 `tilt_stop_deg`를 넘으면 즉시 정지하고, 기준 yaw의 반대 방향으로 일정 시간 이상 전진하면 제자리 복구 회전을 수행합니다. 전진 명령이 있는데 `/odom`상 움직임이 거의 없으면 짧게 후진한 뒤 회전해서 다시 탐색합니다.
 
 기본 출력은 TurtleBot3 Foxy에서 흔히 쓰는 `geometry_msgs/msg/Twist` 타입의 `/cmd_vel`입니다. 기존 수업 코드처럼 `/cmd_vel`이 `geometry_msgs/msg/TwistStamped` 타입이어야 하는 환경이면 YAML에서 `cmd_vel_stamped: true`로 바꾸세요.
+
+상세한 코드 흐름은 [FLOW.md](FLOW.md)에 정리되어 있습니다.
 
 ## 빌드
 
@@ -181,6 +183,24 @@ ros2 topic info /cmd_vel
 - `gap_width_search_deg`: 후보 방향 기준 좌우 몇 도 안에서 gap의 양쪽 장애물을 찾을지 정합니다.
 - `gap_width_obstacle_max_range_m`: 이 거리 안에 있는 LiDAR 점만 gap 경계 장애물로 봅니다. 너무 멀리 있는 벽까지 경계로 잡으면 낮추고, 경계를 못 찾으면 올립니다.
 - `gap_width_boundary_drop_m`: gap 중심 ray보다 이 거리 이상 가까운 LiDAR 점만 좌우 경계로 봅니다. 갭 뒤 대각 벽 표면을 경계로 오인하면 올리고, 실제 갭 경계를 못 잡으면 낮춥니다.
+
+## 동작 우선순위와 주의점
+
+이 노드는 여러 안전장치가 한 번에 판단하고, 뒤 단계가 앞 단계의 속도 명령을 덮어쓰는 구조입니다. 로그에 마지막 모드만 보일 수 있으니, 튜닝할 때는 어떤 제어가 최종 명령을 가져갔는지 확인해야 합니다.
+
+- `GAP_DRIVE`, `NARROW_GAP_DRIVE`, `WALL_ASSIST`, `BLOCKED_TURN`, `EMERGENCY_TURN`은 LiDAR 기본 판단에서 먼저 결정됩니다.
+- `REVERSE_RECOVERY`는 LiDAR 주행 명령 위에 덮어써집니다. 기준 heading 반대 방향으로 전진 중이면 gap이 보여도 기준 heading 쪽으로 회전합니다.
+- `STUCK_BACKUP`과 `STUCK_TURN`은 가장 마지막에 적용됩니다. 그래서 LiDAR상으로는 통과 가능한 gap이 있어도 odom이 움직이지 않는다고 판단되면 stuck 복구가 최종 명령이 됩니다.
+- `WALL_ASSIST`가 켜지면 `centering_gain`으로 만든 중앙 정렬 명령 대신 가까운 벽과 목표 거리를 유지하는 명령을 씁니다. 두 기능이 동시에 더해지는 것이 아니라 둘 중 하나가 선택됩니다.
+- `NARROW_GAP_DRIVE`는 정면 작은 gap을 통과시키기 위해 `front_stop_distance_m` 판단을 일부 완화합니다. 단, 선택된 후보가 `front_window_deg` 안에 있을 때만 정면 stop 예외가 적용됩니다.
+- `side_stop_distance_m`와 `wall_assist_hard_stop_distance_m`는 모두 옆 장애물 회피에 관여합니다. wall assist 중에는 `wall_assist_hard_stop_distance_m`가 더 가까운 최후 방어선으로 쓰입니다.
+- `enforce_gap_width`와 `narrow_passage_enabled`는 둘 다 gap 폭 계산을 사용합니다. `min_passage_width_m`을 올리면 일반 gap 필터와 narrow passage 후보가 함께 더 보수적으로 변합니다.
+- `front_stop_distance_m`, `emergency_stop_distance_m`, `gap_window_deg`, `safe_gap_distance_m`을 동시에 크게 올리면 작은 gap을 전부 막힌 곳으로 볼 수 있습니다. 작은 틈 미션에서는 한 번에 하나씩 조정하는 편이 좋습니다.
+- `stuck_recovery_enabled`가 켜져 있으면 로봇을 손으로 잡고 테스트할 때 쉽게 `STUCK_BACKUP`에 들어갑니다. 바퀴 방향 확인이나 공중 테스트 중에는 일시적으로 `false`로 두는 것이 편합니다.
+
+## 향후 개선 방향
+
+다음 단계로는 LiDAR 한 프레임만 보는 reactive 후보 선택 대신, VM에서 짧은 시간 누적 local occupancy grid를 만들고 Jetson은 센서/모터 브리지로 두는 구성을 추천합니다. 이 방식은 NAV2 전체를 바로 붙이지 않아도 작은 장애물의 끝점, 대각 벽 뒤 gap, C자형 구조처럼 순간 scan 하나로 애매한 상황을 더 안정적으로 판단할 수 있고, 이후 `slam_toolbox + Nav2`로 확장하기도 쉽습니다.
 
 ## 실전 운용 팁
 

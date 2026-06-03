@@ -1,0 +1,87 @@
+turtlebot_autonomous_costmap_drive:
+  ros__parameters:
+    scan_topic: /scan
+    imu_topic: /imu
+    odom_topic: /odom
+    cmd_vel_topic: /cmd_vel
+    cmd_vel_stamped: false
+    local_costmap_topic: /costmap_drive/local_costmap
+    trajectory_marker_topic: /costmap_drive/trajectory_markers
+    costmap_frame_id: base_link
+    auto_start: false
+    reset_heading_on_start: true
+    require_odom: true
+
+    control_period_ms: 100
+    report_period_ms: 1000
+
+    max_linear_speed: 0.12
+    min_linear_speed: 0.02
+    max_angular_speed: 0.85
+    recovery_turn_speed: 0.65
+    recovery_flip_seconds: 3.5
+    prefer_left_recovery: true
+
+    emergency_stop_distance_m: 0.12
+    front_stop_distance_m: 0.20
+    front_slow_distance_m: 0.55
+    side_angle_deg: 75.0
+    side_window_deg: 18.0
+    front_window_deg: 18.0
+    scan_sample_step_deg: 2.0
+    scan_obstacle_max_range_m: 3.0
+    raytrace_max_range_m: 3.0
+    lost_scan_timeout_seconds: 1.0
+
+    grid_resolution_m: 0.04
+    grid_forward_m: 1.60
+    grid_back_m: 0.35
+    grid_half_width_m: 0.95
+    obstacle_memory_seconds: 1.2
+    obstacle_memory_max_points: 6000
+    robot_radius_m: 0.15
+    inflation_radius_m: 0.10
+    lethal_cost_threshold: 75.0
+    unknown_cell_cost: 35.0
+    allow_unknown_trajectory: true
+
+    trajectory_horizon_s: 1.2
+    trajectory_dt_s: 0.10
+    angular_sample_count: 15
+    turn_slowdown_gain: 0.65
+    progress_reward_weight: 2.2
+    cost_obstacle_weight: 4.0
+    cost_unknown_weight: 0.45
+    cost_turn_weight: 0.45
+    cost_smooth_weight: 0.35
+    cost_lateral_weight: 0.35
+    heading_alignment_weight: 0.35
+
+    narrow_corridor_enabled: true
+    narrow_corridor_width_m: 0.62
+    narrow_corridor_side_detect_m: 0.42
+    narrow_corridor_speed_m_s: 0.045
+
+    tilt_stop_deg: 60.0
+    imu_timeout_seconds: 1.0
+    gyro_yaw_sign: 1.0
+    gyro_angular_deadband_rad_s: 0.01
+    gyro_integration_max_dt_seconds: 0.25
+    odom_timeout_seconds: 1.0
+
+    reverse_heading_threshold_deg: 150.0
+    reverse_hold_seconds: 2.0
+    reverse_linear_threshold: 0.02
+    heading_recovery_turn_speed: 0.75
+    reverse_resume_threshold_deg: 25.0
+
+    stuck_recovery_enabled: true
+    stuck_command_linear_threshold: 0.03
+    stuck_odom_linear_threshold: 0.01
+    stuck_min_progress_m: 0.03
+    stuck_hold_seconds: 2.0
+    stuck_backup_speed: 0.04
+    stuck_backup_seconds: 0.8
+    stuck_turn_speed: 0.60
+    stuck_turn_seconds: 1.0
+    stuck_cooldown_seconds: 2.0
