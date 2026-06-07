@@ -174,6 +174,8 @@ public:
     side_window_deg_(this->declare_parameter<double>("side_window_deg", 18.0)),
     front_window_deg_(this->declare_parameter<double>("front_window_deg", 18.0)),
     scan_sample_step_deg_(this->declare_parameter<double>("scan_sample_step_deg", 2.0)),
+    scan_obstacle_min_range_m_(
+      this->declare_parameter<double>("scan_obstacle_min_range_m", 0.05)),
     scan_obstacle_max_range_m_(
       this->declare_parameter<double>("scan_obstacle_max_range_m", 3.0)),
     raytrace_max_range_m_(this->declare_parameter<double>("raytrace_max_range_m", 3.0)),
@@ -891,8 +893,6 @@ private:
     costmap.occupancy.assign(static_cast<std::size_t>(cell_count), -1);
     costmap.cost.assign(static_cast<std::size_t>(cell_count), 0.0);
 
-    mark_scan_free_space(scan, costmap);
-
     std::deque<ObstaclePoint> memory_copy;
     {
       std::lock_guard<std::mutex> lock(data_mutex_);
@@ -911,6 +911,8 @@ private:
       }
     }
 
+    mark_scan_free_space(scan, costmap);
+    mark_current_scan_obstacles(scan, costmap);
     inflate_obstacles(costmap);
     return costmap;
   }
@@ -930,9 +932,10 @@ private:
 
     for (int i = 0; i < static_cast<int>(scan.ranges.size()); i += index_step) {
       const double raw_range = scan.ranges[static_cast<std::size_t>(i)];
-      const bool hit_obstacle = range_is_obstacle(scan, raw_range);
-      const double trace_range = hit_obstacle ?
-        std::min(static_cast<double>(raw_range), raytrace_max_range_m_) : raytrace_max_range_m_;
+      double trace_range = 0.0;
+      if (!range_to_raytrace_distance(scan, raw_range, trace_range)) {
+        continue;
+      }
       const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
       const double step = std::max(0.01, costmap.resolution * 0.5);
       for (double dist = 0.0; dist <= trace_range; dist += step) {
@@ -947,6 +950,36 @@ private:
     }
   }
 
+  void mark_current_scan_obstacles(
+    const sensor_msgs::msg::LaserScan & scan,
+    LocalCostmap & costmap) const
+  {
+    if (scan.ranges.empty() || std::fabs(scan.angle_increment) < 1e-9) {
+      return;
+    }
+
+    const double angle_step = std::max(1.0, scan_sample_step_deg_);
+    const int index_step = std::max(
+      1,
+      static_cast<int>(std::round(deg_to_rad(angle_step) / std::fabs(scan.angle_increment))));
+
+    for (int i = 0; i < static_cast<int>(scan.ranges.size()); i += index_step) {
+      const double range = scan.ranges[static_cast<std::size_t>(i)];
+      if (!range_is_obstacle(scan, range)) {
+        continue;
+      }
+
+      const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
+      const double local_x = range * std::cos(angle);
+      const double local_y = range * std::sin(angle);
+      int gx = 0;
+      int gy = 0;
+      if (world_to_grid(costmap, local_x, local_y, gx, gy)) {
+        mark_obstacle_cell(costmap, gx, gy);
+      }
+    }
+  }
+
   void inflate_obstacles(LocalCostmap & costmap) const
   {
     std::vector<int> obstacle_indices;
@@ -956,7 +989,9 @@ private:
       }
     }
 
-    const double inflation_total = std::max(0.0, robot_radius_m_ + inflation_radius_m_);
+    // The trajectory checker already samples the robot footprint with robot_radius_m_.
+    // Inflation here is only the extra safety margin around obstacle cells.
+    const double inflation_total = std::max(0.0, inflation_radius_m_);
     const int inflation_cells =
       static_cast<int>(std::ceil(inflation_total / costmap.resolution));
 
@@ -971,14 +1006,14 @@ private:
             continue;
           }
           const double dist = std::sqrt(static_cast<double>(dx * dx + dy * dy)) * costmap.resolution;
-          if (dist > inflation_total) {
+          if (dist > inflation_total && dist > 1e-9) {
             continue;
           }
 
           double inflated_cost = 100.0;
-          if (dist > robot_radius_m_ && inflation_radius_m_ > 1e-6) {
+          if (dist > 1e-9 && inflation_total > 1e-6) {
             const double ratio = clamp_value(
-              1.0 - (dist - robot_radius_m_) / inflation_radius_m_,
+              1.0 - dist / inflation_total,
               0.0,
               1.0);
             inflated_cost = std::max(1.0, 100.0 * ratio);
@@ -1015,9 +1050,8 @@ private:
     if (index < 0 || index >= static_cast<int>(costmap.occupancy.size())) {
       return;
     }
-    if (costmap.occupancy[static_cast<std::size_t>(index)] != 100) {
-      costmap.occupancy[static_cast<std::size_t>(index)] = 0;
-    }
+    costmap.occupancy[static_cast<std::size_t>(index)] = 0;
+    costmap.cost[static_cast<std::size_t>(index)] = 0.0;
   }
 
   void mark_obstacle_cell(LocalCostmap & costmap, int gx, int gy) const
@@ -1035,13 +1069,47 @@ private:
     if (!std::isfinite(range)) {
       return false;
     }
-    if (range <= std::max(0.0f, scan.range_min)) {
+    if (range <= minimum_usable_scan_range(scan)) {
       return false;
     }
     if (std::isfinite(scan.range_max) && range > scan.range_max) {
       return false;
     }
     return range <= scan_obstacle_max_range_m_;
+  }
+
+  bool range_to_raytrace_distance(
+    const sensor_msgs::msg::LaserScan & scan,
+    double range,
+    double & trace_range) const
+  {
+    trace_range = 0.0;
+
+    if (std::isnan(range)) {
+      return false;
+    }
+
+    if (std::isinf(range)) {
+      trace_range = raytrace_max_range_m_;
+      return trace_range > 0.0;
+    }
+
+    if (range <= minimum_usable_scan_range(scan)) {
+      return false;
+    }
+
+    if (std::isfinite(scan.range_max) && range > scan.range_max) {
+      trace_range = raytrace_max_range_m_;
+      return trace_range > 0.0;
+    }
+
+    trace_range = std::min(range, raytrace_max_range_m_);
+    return trace_range > 0.0;
+  }
+
+  double minimum_usable_scan_range(const sensor_msgs::msg::LaserScan & scan) const
+  {
+    return std::max(static_cast<double>(std::max(0.0f, scan.range_min)), scan_obstacle_min_range_m_);
   }
 
   double min_range_in_sector(
@@ -1099,7 +1167,7 @@ private:
     const sensor_msgs::msg::LaserScan & scan,
     double range) const
   {
-    if (!std::isfinite(range) || range <= std::max(0.0f, scan.range_min)) {
+    if (!std::isfinite(range) || range <= minimum_usable_scan_range(scan)) {
       return scan_obstacle_max_range_m_;
     }
     if (std::isfinite(scan.range_max) && range > scan.range_max) {
@@ -1560,6 +1628,7 @@ private:
   const double side_window_deg_;
   const double front_window_deg_;
   const double scan_sample_step_deg_;
+  const double scan_obstacle_min_range_m_;
   const double scan_obstacle_max_range_m_;
   const double raytrace_max_range_m_;
   const double lost_scan_timeout_seconds_;

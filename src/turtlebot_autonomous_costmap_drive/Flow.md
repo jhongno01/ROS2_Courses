@@ -60,14 +60,15 @@ flowchart TD
     C --> D["Append hits to obstacle memory"]
     D --> E["Prune old points by obstacle_memory_seconds"]
     E --> F["Create base_link rolling grid"]
-    F --> G["Raytrace current scan as free space"]
-    G --> H["Transform remembered obstacle points back to base_link"]
-    H --> I["Mark occupied cells"]
-    I --> J["Inflate by robot_radius + inflation_radius"]
-    J --> K["Publish nav_msgs/OccupancyGrid"]
+    F --> G["Transform remembered obstacle points back to base_link"]
+    G --> H["Mark remembered occupied cells"]
+    H --> I["Raytrace current scan as free space"]
+    I --> J["Mark current scan hits again"]
+    J --> K["Inflate by extra inflation_radius margin"]
+    K --> L["Publish nav_msgs/OccupancyGrid"]
 ```
 
-Costmap은 `base_link` 기준 rolling grid입니다. 현재 scan ray는 free space를 빠르게 갱신하고, obstacle memory는 짧은 시간 동안 장애물 끝점과 벽 구조를 유지합니다. 그래서 작은 장애물 섬, 대각 벽, C자형 구조처럼 한 프레임 scan만으로 애매한 상황에서 더 안정적인 판단 근거를 가집니다.
+Costmap은 `base_link` 기준 rolling grid입니다. obstacle memory는 짧은 시간 동안 장애물 끝점과 벽 구조를 유지합니다. 이후 현재 scan ray가 free space를 다시 칠해 오래된 obstacle memory를 지우고, 현재 scan hit를 마지막에 다시 obstacle로 찍습니다. 그래서 작은 장애물 섬, 대각 벽, C자형 구조처럼 한 프레임 scan만으로 애매한 상황에서 더 안정적인 판단 근거를 가지면서도 LiDAR 튐값이 오래 남는 문제를 줄입니다.
 
 ## 후보 궤적 선택
 

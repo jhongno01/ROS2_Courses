@@ -16,7 +16,7 @@
 
 ## 동작 개요
 
-노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. `/scan`의 유효 hit point를 `/odom` pose 기준으로 짧게 저장하고, 제어 주기마다 `base_link` 기준 rolling local costmap으로 다시 변환합니다. 현재 scan ray는 free space로 표시하고, 저장된 obstacle point는 occupied cell로 표시한 뒤 `robot_radius_m + inflation_radius_m`만큼 cost를 퍼뜨립니다.
+노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. `/scan`의 유효 hit point를 `/odom` pose 기준으로 짧게 저장하고, 제어 주기마다 `base_link` 기준 rolling local costmap으로 다시 변환합니다. 현재 scan ray는 free space로 표시하고, 저장된 obstacle point는 occupied cell로 표시한 뒤 `inflation_radius_m`만큼 추가 안전 cost를 퍼뜨립니다. 실제 로봇 크기인 `robot_radius_m`은 후보 궤적의 원형 footprint 검사에서 적용합니다.
 
 이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수를 합쳐 가장 좋은 궤적을 선택합니다.
 
@@ -127,24 +127,27 @@ RViz에서 함께 보면 좋은 토픽입니다.
 - `emergency_stop_distance_m`: 전방 최단거리가 이 값보다 가까우면 즉시 전진 후보 평가를 건너뛰고 회전합니다.
 - `front_stop_distance_m`: 이 거리 이하에서는 전진 속도 계산이 가장 보수적으로 내려갑니다.
 - `front_slow_distance_m`: 전방 거리가 이 값 안에 들어오면 점진적으로 감속합니다.
-- `side_angle_deg`: 좌우 거리 판단에 사용할 중심 각도입니다.
-- `side_window_deg`: 좌우 거리 판단 섹터 반각입니다.
-- `front_window_deg`: 전방 거리 판단 섹터 반각입니다.
+- `side_angle_deg`: 좌우 거리 판단에 사용할 중심 각도입니다. 정면을 `0 deg`, 왼쪽을 `+`, 오른쪽을 `-`로 봅니다.
+- `side_window_deg`: 좌우 거리 판단 섹터 반각입니다. 예를 들어 `side_angle_deg: 75`, `side_window_deg: 18`이면 왼쪽은 `57~93 deg`, 오른쪽은 `-93~-57 deg` 범위의 최소 거리를 봅니다.
+- `front_window_deg`: 전방 거리 판단 섹터 반각입니다. 예를 들어 `front_window_deg: 18`이면 정면 `-18~+18 deg` 범위의 최소 거리를 봅니다. 즉 전체 전방 섹터 폭은 `36 deg`입니다.
 - `scan_sample_step_deg`: scan ray를 몇 도 간격으로 costmap에 반영할지 정합니다. 낮추면 촘촘하지만 계산량이 늘어납니다.
+- `scan_obstacle_min_range_m`: 이 거리 이하의 LiDAR 값은 0, 본체 반사, 근거리 튐값으로 보고 obstacle에도 free clearing에도 쓰지 않습니다.
 - `scan_obstacle_max_range_m`: obstacle memory에 넣을 최대 LiDAR 거리입니다. 너무 크면 먼 벽까지 로컬 판단을 방해할 수 있습니다.
-- `raytrace_max_range_m`: 현재 scan ray로 free space를 표시할 최대 거리입니다.
+- `raytrace_max_range_m`: 현재 scan ray로 free space를 표시할 최대 거리입니다. 보통 `scan_obstacle_max_range_m`과 같거나 더 짧게 둡니다. 더 길어도 코드 오류는 없지만, `scan_obstacle_max_range_m` 밖의 hit를 장애물로 저장하지 않으면서 그 뒤쪽을 free로 칠 수 있어 해석이 공격적으로 변합니다.
 - `lost_scan_timeout_seconds`: 마지막 scan이 이 시간 이상 갱신되지 않으면 정지합니다.
+
+LiDAR 값이 `NaN`이면 해당 ray는 완전히 무시합니다. `0` 또는 `scan_obstacle_min_range_m` 이하 값도 무시합니다. `Inf` 또는 `range_max`보다 큰 값은 열린 공간으로 보고 `raytrace_max_range_m`까지만 free space를 표시합니다.
 
 ### Local Costmap
 
 - `grid_resolution_m`: costmap 한 cell의 크기입니다. 작을수록 정밀하지만 계산량이 늘어납니다.
 - `grid_forward_m`: 로봇 앞쪽으로 볼 costmap 거리입니다. 코너와 함정을 더 일찍 보려면 올립니다.
 - `grid_back_m`: 로봇 뒤쪽으로 유지할 costmap 거리입니다. 후진 복구나 회전 중 뒤쪽 장애물을 보려면 올립니다.
-- `grid_half_width_m`: 좌우 costmap 반폭입니다. 좁으면 회전 후보가 map 밖으로 나가 reject될 수 있습니다.
+- `grid_half_width_m`: 좌우 costmap 반폭입니다. 예를 들어 `0.95`이면 로봇 중심선 기준 왼쪽 `0.95 m`, 오른쪽 `0.95 m`, 총 `1.90 m` 폭의 local grid를 만듭니다. 좁으면 회전 후보가 map 밖으로 나가 reject될 수 있습니다.
 - `obstacle_memory_seconds`: scan hit point를 기억할 시간입니다. 짧으면 반응성은 좋지만 구조 기억이 약하고, 길면 지나간 장애물이 오래 남습니다.
 - `obstacle_memory_max_points`: obstacle memory 최대 point 수입니다. 오래 주행할 때 메모리와 계산량을 제한합니다.
-- `robot_radius_m`: 원형 footprint 반지름입니다. 실제 TurtleBot3 Burger 폭과 여유를 합쳐 잡습니다.
-- `inflation_radius_m`: obstacle 주변에 추가로 cost를 퍼뜨릴 거리입니다. 벽을 치면 올리고, 좁은 문틈을 못 지나가면 낮춥니다.
+- `robot_radius_m`: 후보 궤적 충돌 검사에 쓰는 원형 footprint 반지름입니다. 실제 TurtleBot3 Burger 폭과 최소 여유를 합쳐 잡습니다.
+- `inflation_radius_m`: obstacle 주변에 추가로 cost를 퍼뜨릴 거리입니다. `robot_radius_m`에 더해지는 추가 margin으로 생각하면 됩니다. 벽을 치면 올리고, 좁은 문틈을 못 지나가면 낮춥니다.
 - `lethal_cost_threshold`: 후보 궤적이 이 cost 이상인 cell을 밟으면 collision으로 reject합니다. 낮추면 보수적이고, 높이면 좁은 곳을 더 통과합니다.
 - `unknown_cell_cost`: unknown cell을 지나갈 때 부여할 cost입니다.
 - `allow_unknown_trajectory`: unknown cell 통과 후보를 허용할지 정합니다. 실제 완주 우선에서는 `true`가 덜 답답합니다.
@@ -153,7 +156,7 @@ RViz에서 함께 보면 좋은 토픽입니다.
 
 - `trajectory_horizon_s`: 후보 궤적을 몇 초 앞까지 예측할지 정합니다. 길면 코너와 함정을 일찍 보지만 좁은 공간에서 보수적입니다.
 - `trajectory_dt_s`: 궤적 예측 샘플 간격입니다. 낮추면 정밀하지만 계산량이 늘어납니다.
-- `angular_sample_count`: `-max_angular_speed`부터 `+max_angular_speed`까지 몇 개 후보를 볼지 정합니다. 홀수로 두면 0 회전 후보가 포함되기 쉽습니다.
+- `angular_sample_count`: 최종 회전 각도가 아니라 `/cmd_vel.angular.z` 회전 속도 후보를 몇 개 볼지 정합니다. 예를 들어 `max_angular_speed: 0.85`, `angular_sample_count: 15`이면 `-0.85 ~ +0.85 rad/s` 사이의 회전 속도 명령 15개를 만들고, 각 명령을 `trajectory_horizon_s` 동안 시뮬레이션합니다. 로그의 `traj=15/15`도 여기서 나온 숫자입니다. 홀수로 두면 `0.0 rad/s` 직진 후보가 포함됩니다.
 - `turn_slowdown_gain`: 회전량이 클수록 선속도를 낮추는 정도입니다.
 - `progress_reward_weight`: 앞으로 나아간 거리에 주는 보상입니다. 올리면 더 적극적으로 전진합니다.
 - `cost_obstacle_weight`: obstacle/inflation cost 감점입니다. 벽을 스치면 올리고, 너무 소극적이면 낮춥니다.
