@@ -112,6 +112,14 @@ struct LocalCostmap
   std::vector<double> cost;
 };
 
+struct LongRangeTarget
+{
+  bool valid = false;
+  double angle_rad = 0.0;
+  double distance_m = 0.0;
+  double score = 0.0;
+};
+
 struct CostmapSummary
 {
   double front_m = 0.0;
@@ -126,6 +134,7 @@ struct CostmapSummary
   int obstacle_points = 0;
   bool has_safe_trajectory = false;
   bool narrow_corridor = false;
+  LongRangeTarget long_range_target;
 };
 
 struct DriveOutput
@@ -205,6 +214,22 @@ public:
         cost_smooth_weight_(this->declare_parameter<double>("cost_smooth_weight", 0.35)),
         cost_lateral_weight_(this->declare_parameter<double>("cost_lateral_weight", 0.35)),
         heading_alignment_weight_(this->declare_parameter<double>("heading_alignment_weight", 0.35)),
+        long_range_clearance_enabled_(
+            this->declare_parameter<bool>("long_range_clearance_enabled", true)),
+        long_range_clearance_weight_(
+            this->declare_parameter<double>("long_range_clearance_weight", 0.65)),
+        long_range_clearance_max_range_m_(
+            this->declare_parameter<double>("long_range_clearance_max_range_m", 2.0)),
+        long_range_clearance_min_range_m_(
+            this->declare_parameter<double>("long_range_clearance_min_range_m", 0.60)),
+        long_range_clearance_search_deg_(
+            this->declare_parameter<double>("long_range_clearance_search_deg", 100.0)),
+        long_range_clearance_window_deg_(
+            this->declare_parameter<double>("long_range_clearance_window_deg", 6.0)),
+        long_range_clearance_alignment_deg_(
+            this->declare_parameter<double>("long_range_clearance_alignment_deg", 45.0)),
+        long_range_clearance_start_bias_(
+            this->declare_parameter<double>("long_range_clearance_start_bias", 0.35)),
         narrow_corridor_enabled_(this->declare_parameter<bool>("narrow_corridor_enabled", true)),
         narrow_corridor_width_m_(this->declare_parameter<double>("narrow_corridor_width_m", 0.62)),
         narrow_corridor_side_detect_m_(
@@ -238,7 +263,10 @@ public:
         stuck_backup_seconds_(this->declare_parameter<double>("stuck_backup_seconds", 0.8)),
         stuck_turn_speed_(this->declare_parameter<double>("stuck_turn_speed", 0.60)),
         stuck_turn_seconds_(this->declare_parameter<double>("stuck_turn_seconds", 1.0)),
-        stuck_cooldown_seconds_(this->declare_parameter<double>("stuck_cooldown_seconds", 2.0))
+        stuck_cooldown_seconds_(this->declare_parameter<double>("stuck_cooldown_seconds", 2.0)),
+        blocked_recovery_enabled_(this->declare_parameter<bool>("blocked_recovery_enabled", true)),
+        blocked_recovery_hold_seconds_(
+            this->declare_parameter<double>("blocked_recovery_hold_seconds", 1.2))
   {
     enabled_requested_ = auto_start_;
 
@@ -334,6 +362,13 @@ private:
     TURN
   };
 
+  enum class RecoverySource
+  {
+    NONE,
+    STUCK,
+    BLOCKED
+  };
+
   void set_enabled_callback(
       const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
       std::shared_ptr<std_srvs::srv::SetBool::Response> response)
@@ -351,6 +386,7 @@ private:
         enabled_requested_ = true;
         reverse_condition_active_ = false;
         reverse_recovery_active_ = false;
+        blocked_recovery_candidate_active_ = false;
         reset_recovery_state();
 
         if (reset_heading_on_start_ || !heading_reference_valid_)
@@ -373,8 +409,10 @@ private:
         heading_reference_valid_ = false;
         reverse_condition_active_ = false;
         reverse_recovery_active_ = false;
+        blocked_recovery_candidate_active_ = false;
         stuck_candidate_active_ = false;
         stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
+        recovery_source_ = RecoverySource::NONE;
         obstacle_memory_.clear();
         reset_recovery_state();
         publish_stop = true;
@@ -414,9 +452,32 @@ private:
 
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
   {
+    auto sanitized_scan = std::make_shared<sensor_msgs::msg::LaserScan>(*msg);
+    sanitize_scan_ranges(*sanitized_scan);
+
     std::lock_guard<std::mutex> lock(data_mutex_);
-    latest_scan_ = msg;
+    latest_scan_ = sanitized_scan;
     latest_scan_time_ = this->now();
+  }
+
+  void sanitize_scan_ranges(sensor_msgs::msg::LaserScan &scan) const
+  {
+    float previous_valid_range = std::numeric_limits<float>::quiet_NaN();
+    bool has_previous_valid_range = false;
+
+    for (auto &range : scan.ranges)
+    {
+      if (std::isfinite(static_cast<double>(range)) && range > 0.0f)
+      {
+        previous_valid_range = range;
+        has_previous_valid_range = true;
+        continue;
+      }
+
+      range = has_previous_valid_range
+                  ? previous_valid_range
+                  : std::numeric_limits<float>::quiet_NaN();
+    }
   }
 
   void imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
@@ -601,6 +662,7 @@ private:
     output.costmap.right_m = min_range_in_sector(scan, -side_angle_deg_, side_window_deg_);
     output.costmap.obstacle_points = obstacle_memory_size();
     output.costmap.narrow_corridor = detect_narrow_corridor(output.costmap);
+    output.costmap.long_range_target = compute_long_range_target(scan, safety);
 
     if (output.costmap.front_m <= emergency_stop_distance_m_)
     {
@@ -639,7 +701,11 @@ private:
       const SafetySnapshot &safety,
       DriveOutput &output) const
   {
-    const int sample_count = std::max(3, angular_sample_count_);
+    int sample_count = std::max(3, angular_sample_count_);
+    if (sample_count % 2 == 0)
+    {
+      ++sample_count;
+    }
     const double front_ratio = clamp_value(
         (output.costmap.front_m - front_stop_distance_m_) /
             std::max(0.01, front_slow_distance_m_ - front_stop_distance_m_),
@@ -672,7 +738,15 @@ private:
       std::vector<Pose2D> path;
       ++output.costmap.evaluated_trajectories;
       if (!score_trajectory(
-              costmap, safety, linear_x, angular_z, score, avg_cost, unknown_ratio, path))
+              costmap,
+              safety,
+              output.costmap.long_range_target,
+              linear_x,
+              angular_z,
+              score,
+              avg_cost,
+              unknown_ratio,
+              path))
       {
         ++output.costmap.rejected_trajectories;
         continue;
@@ -709,6 +783,7 @@ private:
   bool score_trajectory(
       const LocalCostmap &costmap,
       const SafetySnapshot &safety,
+      const LongRangeTarget &long_range_target,
       double linear_x,
       double angular_z,
       double &score,
@@ -757,6 +832,25 @@ private:
         clamp_value(std::fabs(angular_z - last_command_angular_z_) / (2.0 * angular_limit), 0.0, 1.0);
     const double heading_error = safety.heading_reference_valid ? std::fabs(normalize_angle_rad(safety.current_heading_rad + pose.yaw - safety.heading_reference_rad)) : 0.0;
     const double heading_ratio = clamp_value(heading_error / kPi, 0.0, 1.0);
+    double long_range_reward = 0.0;
+    if (long_range_target.valid && long_range_clearance_weight_ > 0.0)
+    {
+      const double alignment_width = deg_to_rad(std::max(1.0, long_range_clearance_alignment_deg_));
+      const double target_error =
+          std::fabs(normalize_angle_rad(pose.yaw - long_range_target.angle_rad));
+      const double target_alignment =
+          1.0 - clamp_value(target_error / alignment_width, 0.0, 1.0);
+      const double max_distance = std::max(
+          long_range_clearance_min_range_m_ + 0.01,
+          long_range_clearance_max_range_m_);
+      const double clearance_ratio = clamp_value(
+          (long_range_target.distance_m - long_range_clearance_min_range_m_) /
+              (max_distance - long_range_clearance_min_range_m_),
+          0.0,
+          1.0);
+      long_range_reward =
+          long_range_clearance_weight_ * clearance_ratio * target_alignment;
+    }
 
     score =
         progress_reward_weight_ * pose.x -
@@ -765,7 +859,8 @@ private:
         cost_turn_weight_ * turn_ratio -
         cost_smooth_weight_ * smooth_ratio -
         cost_lateral_weight_ * std::fabs(pose.y) -
-        heading_alignment_weight_ * heading_ratio;
+        heading_alignment_weight_ * heading_ratio +
+        long_range_reward;
 
     (void)max_cost;
     return true;
@@ -858,6 +953,88 @@ private:
     const bool measured_width_narrow =
         summary.left_m + summary.right_m <= narrow_corridor_width_m_;
     return both_sides_near && measured_width_narrow;
+  }
+
+  LongRangeTarget compute_long_range_target(
+      const sensor_msgs::msg::LaserScan &scan,
+      const SafetySnapshot &safety) const
+  {
+    LongRangeTarget target;
+    if (!long_range_clearance_enabled_ || scan.ranges.empty() ||
+        std::fabs(scan.angle_increment) < 1e-9)
+    {
+      return target;
+    }
+
+    const double max_distance = effective_long_range_max(scan);
+    const double min_distance = std::max(0.0, long_range_clearance_min_range_m_);
+    if (max_distance <= min_distance + 0.01)
+    {
+      return target;
+    }
+
+    const double start_angle = safety.heading_reference_valid
+                                   ? normalize_angle_rad(
+                                         safety.heading_reference_rad -
+                                         safety.current_heading_rad)
+                                   : 0.0;
+    const double search_width = deg_to_rad(std::max(1.0, long_range_clearance_search_deg_));
+    const double forward_limit = deg_to_rad(120.0);
+    const double window_half_width = std::max(0.0, long_range_clearance_window_deg_);
+    const double step_deg = std::max(1.0, scan_sample_step_deg_);
+    const double start_bias = std::max(0.0, long_range_clearance_start_bias_);
+
+    for (int i = 0; i < static_cast<int>(scan.ranges.size()); ++i)
+    {
+      const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
+      const double start_error = std::fabs(normalize_angle_rad(angle - start_angle));
+      if (start_error > search_width)
+      {
+        continue;
+      }
+      if (std::fabs(normalize_angle_rad(angle)) > forward_limit)
+      {
+        continue;
+      }
+
+      double window_min = max_distance;
+      bool sampled = false;
+      for (double offset_deg = -window_half_width;
+           offset_deg <= window_half_width + 1e-6;
+           offset_deg += step_deg)
+      {
+        double range = 0.0;
+        double clearance = 0.0;
+        if (!range_at_angle(scan, angle + deg_to_rad(offset_deg), range) ||
+            !range_to_long_range_clearance(scan, range, clearance))
+        {
+          continue;
+        }
+        sampled = true;
+        window_min = std::min(window_min, clearance);
+      }
+
+      if (!sampled || window_min < min_distance)
+      {
+        continue;
+      }
+
+      const double clearance_ratio =
+          clamp_value((window_min - min_distance) / (max_distance - min_distance), 0.0, 1.0);
+      const double start_alignment =
+          1.0 - clamp_value(start_error / search_width, 0.0, 1.0);
+      const double candidate_score = clearance_ratio + start_bias * start_alignment;
+
+      if (!target.valid || candidate_score > target.score)
+      {
+        target.valid = true;
+        target.angle_rad = normalize_angle_rad(angle);
+        target.distance_m = window_min;
+        target.score = candidate_score;
+      }
+    }
+
+    return target;
   }
 
   void integrate_scan_if_new(
@@ -1143,15 +1320,7 @@ private:
 
   bool range_is_obstacle(const sensor_msgs::msg::LaserScan &scan, double range) const
   {
-    if (!std::isfinite(range))
-    {
-      return false;
-    }
-    if (range <= minimum_usable_scan_range(scan))
-    {
-      return false;
-    }
-    if (std::isfinite(scan.range_max) && range > scan.range_max)
+    if (!range_is_usable(scan, range))
     {
       return false;
     }
@@ -1165,35 +1334,62 @@ private:
   {
     trace_range = 0.0;
 
-    if (std::isnan(range))
+    if (!range_is_usable(scan, range))
     {
       return false;
-    }
-
-    if (std::isinf(range))
-    {
-      trace_range = raytrace_max_range_m_;
-      return trace_range > 0.0;
-    }
-
-    if (range <= minimum_usable_scan_range(scan))
-    {
-      return false;
-    }
-
-    if (std::isfinite(scan.range_max) && range > scan.range_max)
-    {
-      trace_range = raytrace_max_range_m_;
-      return trace_range > 0.0;
     }
 
     trace_range = std::min(range, raytrace_max_range_m_);
     return trace_range > 0.0;
   }
 
+  bool range_to_long_range_clearance(
+      const sensor_msgs::msg::LaserScan &scan,
+      double range,
+      double &clearance) const
+  {
+    clearance = 0.0;
+
+    if (!range_is_usable(scan, range))
+    {
+      return false;
+    }
+
+    const double max_distance = effective_long_range_max(scan);
+    clearance = clamp_value(range, 0.0, max_distance);
+    return clearance > 0.0;
+  }
+
+  double effective_long_range_max(const sensor_msgs::msg::LaserScan &scan) const
+  {
+    double max_distance = std::max(0.1, long_range_clearance_max_range_m_);
+    if (std::isfinite(scan.range_max) && scan.range_max > 0.0)
+    {
+      max_distance = std::min(max_distance, static_cast<double>(scan.range_max));
+    }
+    return std::max(max_distance, long_range_clearance_min_range_m_ + 0.01);
+  }
+
   double minimum_usable_scan_range(const sensor_msgs::msg::LaserScan &scan) const
   {
     return std::max(static_cast<double>(std::max(0.0f, scan.range_min)), scan_obstacle_min_range_m_);
+  }
+
+  bool range_is_usable(const sensor_msgs::msg::LaserScan &scan, double range) const
+  {
+    if (!std::isfinite(range))
+    {
+      return false;
+    }
+    if (range <= minimum_usable_scan_range(scan))
+    {
+      return false;
+    }
+    if (std::isfinite(scan.range_max) && range > scan.range_max)
+    {
+      return false;
+    }
+    return true;
   }
 
   double min_range_in_sector(
@@ -1210,6 +1406,10 @@ private:
       double range = 0.0;
       if (range_at_angle(scan, deg_to_rad(center_deg + offset_deg), range))
       {
+        if (!range_is_usable(scan, range))
+        {
+          continue;
+        }
         min_range = std::min(min_range, sanitize_range(scan, range));
         sampled = true;
       }
@@ -1331,7 +1531,9 @@ private:
     reverse_condition_active_ = false;
     reverse_recovery_active_ = false;
     stuck_candidate_active_ = false;
+    blocked_recovery_candidate_active_ = false;
     stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
+    recovery_source_ = RecoverySource::NONE;
   }
 
   SafetySnapshot get_safety_snapshot()
@@ -1472,19 +1674,31 @@ private:
 
   void apply_stuck_recovery(DriveOutput &output, const rclcpp::Time &now)
   {
-    if (!stuck_recovery_enabled_)
-    {
-      return;
-    }
-
     if (stuck_recovery_phase_ != StuckRecoveryPhase::IDLE)
     {
       update_stuck_recovery_command(output, now);
       return;
     }
 
+    const bool blocked_mode = is_blocked_recovery_candidate(output.mode);
+    if (!blocked_mode)
+    {
+      blocked_recovery_candidate_active_ = false;
+    }
+
     if (stuck_recovery_finished_once_ &&
         (now - last_stuck_recovery_finished_at_).seconds() < stuck_cooldown_seconds_)
+    {
+      return;
+    }
+
+    if (blocked_recovery_enabled_ && blocked_mode)
+    {
+      apply_blocked_recovery_candidate(output, now);
+      return;
+    }
+
+    if (!stuck_recovery_enabled_)
     {
       return;
     }
@@ -1540,15 +1754,44 @@ private:
 
     if ((now - stuck_candidate_started_at_).seconds() >= stuck_hold_seconds_)
     {
-      start_stuck_recovery(output, now);
+      start_recovery(output, now, RecoverySource::STUCK);
       update_stuck_recovery_command(output, now);
     }
   }
 
-  void start_stuck_recovery(const DriveOutput &output, const rclcpp::Time &now)
+  bool is_blocked_recovery_candidate(const std::string &mode) const
+  {
+    return mode == "BLOCKED_TURN" || mode == "EMERGENCY_TURN";
+  }
+
+  void apply_blocked_recovery_candidate(DriveOutput &output, const rclcpp::Time &now)
   {
     stuck_candidate_active_ = false;
+
+    if (!blocked_recovery_candidate_active_)
+    {
+      blocked_recovery_candidate_active_ = true;
+      blocked_recovery_candidate_started_at_ = now;
+      return;
+    }
+
+    if ((now - blocked_recovery_candidate_started_at_).seconds() >=
+        blocked_recovery_hold_seconds_)
+    {
+      start_recovery(output, now, RecoverySource::BLOCKED);
+      update_stuck_recovery_command(output, now);
+    }
+  }
+
+  void start_recovery(
+      const DriveOutput &output,
+      const rclcpp::Time &now,
+      RecoverySource source)
+  {
+    stuck_candidate_active_ = false;
+    blocked_recovery_candidate_active_ = false;
     stuck_recovery_phase_ = StuckRecoveryPhase::BACKUP;
+    recovery_source_ = source;
     stuck_phase_started_at_ = now;
     stuck_turn_direction_ = choose_stuck_turn_direction(output.costmap);
     reverse_condition_active_ = false;
@@ -1581,6 +1824,7 @@ private:
         phase_elapsed >= stuck_turn_seconds_)
     {
       stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
+      recovery_source_ = RecoverySource::NONE;
       stuck_recovery_finished_once_ = true;
       last_stuck_recovery_finished_at_ = now;
       return;
@@ -1590,8 +1834,16 @@ private:
     {
       output.linear_x = -std::fabs(stuck_backup_speed_);
       output.angular_z = 0.0;
-      output.mode = "STUCK_BACKUP";
-      output.detail = "odom shows little progress";
+      if (recovery_source_ == RecoverySource::BLOCKED)
+      {
+        output.mode = "BLOCKED_BACKUP";
+        output.detail = "blocked turn persisted, backing up for a wider lidar view";
+      }
+      else
+      {
+        output.mode = "STUCK_BACKUP";
+        output.detail = "odom shows little progress";
+      }
       return;
     }
 
@@ -1600,8 +1852,16 @@ private:
       output.linear_x = 0.0;
       output.angular_z =
           sign_value(static_cast<double>(stuck_turn_direction_)) * std::fabs(stuck_turn_speed_);
-      output.mode = "STUCK_TURN";
-      output.detail = "turning after backup";
+      if (recovery_source_ == RecoverySource::BLOCKED)
+      {
+        output.mode = "BLOCKED_ESCAPE_TURN";
+        output.detail = "turning after blocked backup";
+      }
+      else
+      {
+        output.mode = "STUCK_TURN";
+        output.detail = "turning after backup";
+      }
     }
   }
 
@@ -1634,7 +1894,7 @@ private:
       marker.id = 1;
       marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
       marker.action = visualization_msgs::msg::Marker::ADD;
-      marker.scale.x = 0.025;
+      marker.scale.x = 0.05;
       marker.color.r = 0.0f;
       marker.color.g = 0.45f;
       marker.color.b = 1.0f;
@@ -1661,6 +1921,50 @@ private:
       delete_marker.id = 1;
       delete_marker.action = visualization_msgs::msg::Marker::DELETE;
       array.markers.push_back(delete_marker);
+    }
+
+    if (output.costmap.long_range_target.valid)
+    {
+      visualization_msgs::msg::Marker target_marker;
+      target_marker.header.stamp = this->now();
+      target_marker.header.frame_id = costmap_frame_id_;
+      target_marker.ns = "long_range_target";
+      target_marker.id = 2;
+      target_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+      target_marker.action = visualization_msgs::msg::Marker::ADD;
+      target_marker.scale.x = 0.035;
+      target_marker.color.r = 0.0f;
+      target_marker.color.g = 1.0f;
+      target_marker.color.b = 0.25f;
+      target_marker.color.a = 0.9f;
+      target_marker.lifetime.sec = 0;
+      target_marker.lifetime.nanosec = 500000000;
+      target_marker.pose.orientation.w = 1.0;
+
+      geometry_msgs::msg::Point origin;
+      origin.x = 0.0;
+      origin.y = 0.0;
+      origin.z = 0.11;
+      target_marker.points.push_back(origin);
+
+      geometry_msgs::msg::Point target;
+      target.x = output.costmap.long_range_target.distance_m *
+                 std::cos(output.costmap.long_range_target.angle_rad);
+      target.y = output.costmap.long_range_target.distance_m *
+                 std::sin(output.costmap.long_range_target.angle_rad);
+      target.z = 0.11;
+      target_marker.points.push_back(target);
+      array.markers.push_back(target_marker);
+    }
+    else
+    {
+      visualization_msgs::msg::Marker delete_target_marker;
+      delete_target_marker.header.stamp = this->now();
+      delete_target_marker.header.frame_id = costmap_frame_id_;
+      delete_target_marker.ns = "long_range_target";
+      delete_target_marker.id = 2;
+      delete_target_marker.action = visualization_msgs::msg::Marker::DELETE;
+      array.markers.push_back(delete_target_marker);
     }
 
     trajectory_marker_publisher_->publish(array);
@@ -1719,7 +2023,8 @@ private:
         this->get_logger(),
         "[%s] enabled=%s imu=%s odom=%s ref=%s tilt=%.1fdeg gyro_yaw=%.1fdeg "
         "front=%.2fm left=%.2fm right=%.2fm narrow=%s obs=%d traj=%d/%d "
-        "score=%.2f avg_cost=%.1f unknown=%.2f target_w=%.2f cmd=(%.2f, %.2f) %s",
+        "score=%.2f avg_cost=%.1f unknown=%.2f long=%s %.0fdeg/%.2fm "
+        "target_w=%.2f cmd=(%.2f, %.2f) %s",
         output.mode.c_str(),
         output.enabled_requested ? "yes" : "no",
         output.imu_ready ? "yes" : "no",
@@ -1737,6 +2042,13 @@ private:
         output.costmap.best_score,
         output.costmap.best_avg_cost,
         output.costmap.best_unknown_ratio,
+        output.costmap.long_range_target.valid ? "yes" : "no",
+        output.costmap.long_range_target.valid
+            ? rad_to_deg(output.costmap.long_range_target.angle_rad)
+            : 0.0,
+        output.costmap.long_range_target.valid
+            ? output.costmap.long_range_target.distance_m
+            : 0.0,
         output.costmap.best_angular_z,
         output.linear_x,
         output.angular_z,
@@ -1795,6 +2107,14 @@ private:
   const double cost_smooth_weight_;
   const double cost_lateral_weight_;
   const double heading_alignment_weight_;
+  const bool long_range_clearance_enabled_;
+  const double long_range_clearance_weight_;
+  const double long_range_clearance_max_range_m_;
+  const double long_range_clearance_min_range_m_;
+  const double long_range_clearance_search_deg_;
+  const double long_range_clearance_window_deg_;
+  const double long_range_clearance_alignment_deg_;
+  const double long_range_clearance_start_bias_;
   const bool narrow_corridor_enabled_;
   const double narrow_corridor_width_m_;
   const double narrow_corridor_side_detect_m_;
@@ -1820,6 +2140,8 @@ private:
   const double stuck_turn_speed_;
   const double stuck_turn_seconds_;
   const double stuck_cooldown_seconds_;
+  const bool blocked_recovery_enabled_;
+  const double blocked_recovery_hold_seconds_;
 
   rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_publisher_;
   rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_stamped_publisher_;
@@ -1863,7 +2185,10 @@ private:
   rclcpp::Time stuck_candidate_started_at_;
   double stuck_candidate_x_ = 0.0;
   double stuck_candidate_y_ = 0.0;
+  bool blocked_recovery_candidate_active_ = false;
+  rclcpp::Time blocked_recovery_candidate_started_at_;
   StuckRecoveryPhase stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
+  RecoverySource recovery_source_ = RecoverySource::NONE;
   rclcpp::Time stuck_phase_started_at_;
   int stuck_turn_direction_ = 1;
   bool stuck_recovery_finished_once_ = false;

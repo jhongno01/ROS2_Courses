@@ -58,6 +58,15 @@ turtlebot_autonomous_costmap_drive:
     cost_lateral_weight: 0.35
     heading_alignment_weight: 0.55
 
+    long_range_clearance_enabled: true
+    long_range_clearance_weight: 0.65
+    long_range_clearance_max_range_m: 1.8
+    long_range_clearance_min_range_m: 0.55
+    long_range_clearance_search_deg: 100.0
+    long_range_clearance_window_deg: 6.0
+    long_range_clearance_alignment_deg: 45.0
+    long_range_clearance_start_bias: 0.35
+
     narrow_corridor_enabled: true
     narrow_corridor_width_m: 0.30
     narrow_corridor_side_detect_m: 0.16
@@ -86,3 +95,6 @@ turtlebot_autonomous_costmap_drive:
     stuck_turn_speed: 0.60
     stuck_turn_seconds: 1.0
     stuck_cooldown_seconds: 2.0
+
+    blocked_recovery_enabled: true
+    blocked_recovery_hold_seconds: 1.2

@@ -23,21 +23,22 @@ flowchart TD
     N -- "Yes" --> O["TILT_STOP: publish 0 velocity"]
     N -- "No" --> P["Integrate scan into obstacle memory"]
     P --> Q["Build rolling local costmap"]
-    Q --> R["Score forward trajectory candidates"]
-    R --> S["Apply reverse heading guard"]
-    S --> T["Apply odom stuck recovery"]
-    T --> U["Publish /cmd_vel, /local_costmap, /trajectory_markers"]
-    F --> U
-    H --> U
-    M --> U
-    O --> U
+    Q --> R["Find long-range open target"]
+    R --> S["Score forward trajectory candidates"]
+    S --> T["Apply reverse heading guard"]
+    T --> U["Apply blocked/stuck recovery"]
+    U --> V["Publish /cmd_vel, /local_costmap, /trajectory_markers"]
+    F --> V
+    H --> V
+    M --> V
+    O --> V
 ```
 
 ## 입력과 상태 저장
 
 1. `scan_callback`
 
-   `/scan`의 최신 `LaserScan`과 수신 시간을 저장합니다. 제어 timer에서는 `lost_scan_timeout_seconds`보다 오래된 scan을 사용하지 않습니다.
+   `/scan`의 최신 `LaserScan`을 복사한 뒤 `Inf`, `NaN`, `0.0` 값을 같은 scan 안의 바로 이전 각도 유효 range로 대체해 저장합니다. 이전 유효 값이 없으면 `NaN`으로 남겨 이후 판단에서 무시합니다. 제어 timer에서는 `lost_scan_timeout_seconds`보다 오래된 scan을 사용하지 않습니다.
 
 2. `imu_callback`
 
@@ -75,7 +76,8 @@ Costmap은 `base_link` 기준 rolling grid입니다. obstacle memory는 짧은 �
 ```mermaid
 flowchart TD
     A["Build costmap summary"] --> B["front / left / right range"]
-    B --> C{"Front inside emergency distance?"}
+    B --> B2["Find long-range target near start heading"]
+    B2 --> C{"Front inside emergency distance?"}
     C -- "Yes" --> D["EMERGENCY_TURN"]
     C -- "No" --> E["Sample angular_z candidates"]
     E --> F["Predict unicycle trajectory"]
@@ -101,6 +103,9 @@ flowchart TD
 - 직전 명령과의 급격한 변화 감점
 - 좌우로 크게 벗어나는 lateral drift 감점
 - start heading 기준에서 크게 벗어나는 heading 감점
+- start heading에 가까우면서 멀리 열린 ray 방향과 후보 최종 heading이 가까울 때 주는 long-range clearance 보상
+
+Long-range target은 sanitize된 현재 scan에서 `long_range_clearance_search_deg` 범위 안을 훑어 찾습니다. 단일 ray만 믿지 않고 `long_range_clearance_window_deg` 반각 안의 최소 거리를 함께 보며, 후보 궤적의 최종 heading이 이 target에 가까우면 `long_range_clearance_weight`만큼 보상을 받습니다. RViz에서는 초록색 `long_range_target` 선으로 표시됩니다.
 
 ## 주행 모드
 
@@ -117,6 +122,8 @@ flowchart TD
 - `REVERSE_RECOVERY`: 기준 heading 쪽으로 제자리 회전합니다.
 - `STUCK_BACKUP`: 전진 명령이 있는데 odom상 진행이 없어 짧게 후진합니다.
 - `STUCK_TURN`: 후진 후 더 여유 있는 방향으로 제자리 회전합니다.
+- `BLOCKED_BACKUP`: `BLOCKED_TURN` 또는 `EMERGENCY_TURN`이 일정 시간 지속되어 LiDAR 시야 확보를 위해 짧게 후진합니다.
+- `BLOCKED_ESCAPE_TURN`: blocked backup 후 더 여유 있는 방향으로 짧게 회전합니다.
 
 ## 덮어쓰기 우선순위
 
@@ -124,14 +131,14 @@ flowchart TD
 
 1. Costmap 기본 로직이 `COSTMAP_DRIVE`, `NARROW_COSTMAP_DRIVE`, `BLOCKED_TURN`, `EMERGENCY_TURN` 중 하나를 만듭니다.
 2. `apply_reverse_guard`가 필요하면 `REVERSE_RECOVERY`로 선속도 0, 회전 명령을 덮어씁니다.
-3. `apply_stuck_recovery`가 필요하면 `STUCK_BACKUP` 또는 `STUCK_TURN`으로 다시 덮어씁니다.
+3. `apply_stuck_recovery`가 막힘 회전 지속 또는 odom stuck을 감지하면 `BLOCKED_BACKUP`, `BLOCKED_ESCAPE_TURN`, `STUCK_BACKUP`, `STUCK_TURN`으로 다시 덮어씁니다.
 
 따라서 로그의 최종 mode는 마지막 안전장치 기준입니다. 예를 들어 costmap상 안전한 궤적이 있어도 odom이 움직이지 않으면 최종 mode는 `STUCK_BACKUP`이 됩니다.
 
 ## RViz와 로그 확인 포인트
 
 - `/costmap_drive/local_costmap`: local occupancy grid입니다. 회색/검은 장애물과 inflation이 너무 커서 좁은 통로를 막으면 `inflation_radius_m` 또는 `robot_radius_m`을 낮춥니다.
-- `/costmap_drive/trajectory_markers`: 최종 선택된 궤적입니다. 궤적이 벽 쪽으로 붙으면 `cost_obstacle_weight`, `cost_lateral_weight`, `cost_turn_weight`를 조정합니다.
+- `/costmap_drive/trajectory_markers`: 파란색은 최종 선택된 궤적, 초록색은 long-range target입니다. 궤적이 벽 쪽으로 붙으면 `cost_obstacle_weight`, `cost_lateral_weight`, `cost_turn_weight`를 조정합니다. 초록색 target이 옆방으로 자주 튀면 `long_range_clearance_search_deg` 또는 `long_range_clearance_weight`를 낮춥니다.
 - 터미널 로그의 `traj=evaluated/rejected`: RViz marker가 아니라 `report_timer_callback`에서 찍는 숫자입니다. 후보 대부분이 reject되면 costmap이 너무 보수적이거나 grid 범위가 너무 좁은 상태입니다.
 
-즉 RViz에서는 map과 최종 선택 궤적을 보고, 후보 개수와 reject 개수는 노드 로그에서 확인합니다. 현재 코드는 모든 후보 궤적을 RViz로 그리지 않고, 최종 선택된 궤적만 `/costmap_drive/trajectory_markers`로 발행합니다.
+즉 RViz에서는 map, 최종 선택 궤적, long-range target을 보고, 후보 개수와 reject 개수는 노드 로그에서 확인합니다. 현재 코드는 모든 후보 궤적을 RViz로 그리지 않고, 최종 선택된 궤적과 long-range target만 `/costmap_drive/trajectory_markers`로 발행합니다.

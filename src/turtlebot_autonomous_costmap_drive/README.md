@@ -25,9 +25,10 @@
 ## 빌드
 
 워크스페이스 루트에서 실행합니다.
+.yaml의 사항을 반영하게 하려면, 꼭 심볼릭 링크 빌드 진행
 
 ```bash
-colcon build --packages-select turtlebot_autonomous_costmap_drive
+colcon build --symlink-install --packages-select turtlebot_autonomous_costmap_drive
 source install/setup.bash
 ```
 
@@ -90,6 +91,8 @@ RViz에서 함께 보면 좋은 토픽입니다.
 4. 열린 공간에서 너무 느리면 `max_linear_speed`와 `progress_reward_weight`를 조금 올립니다.
 5. 좌우 흔들림은 `cost_smooth_weight`, `cost_turn_weight`, `max_angular_speed`로 잡습니다.
 6. C/U자 구조에서 늦게 빠져나오면 `trajectory_horizon_s`, `grid_forward_m`, `obstacle_memory_seconds`를 조금 올립니다.
+7. 대각선 벽 뒤의 긴 출구를 늦게 잡으면 `long_range_clearance_weight`, `long_range_clearance_max_range_m`, `long_range_clearance_search_deg`를 조정합니다.
+8. `BLOCKED_TURN`에서 좌우로 계속 반전하면 `blocked_recovery_hold_seconds`, `stuck_backup_seconds`, `stuck_turn_seconds`를 조정합니다.
 
 튜닝은 한 번에 하나씩 바꾸고 같은 Gazebo world 또는 같은 rosbag replay에서 비교하세요. costmap 방식은 파라미터끼리 상호작용이 크기 때문에 여러 값을 동시에 바꾸면 원인 파악이 어려워집니다.
 
@@ -136,7 +139,7 @@ RViz에서 함께 보면 좋은 토픽입니다.
 - `raytrace_max_range_m`: 현재 scan ray로 free space를 표시할 최대 거리입니다. 보통 `scan_obstacle_max_range_m`과 같거나 더 짧게 둡니다. 더 길어도 코드 오류는 없지만, `scan_obstacle_max_range_m` 밖의 hit를 장애물로 저장하지 않으면서 그 뒤쪽을 free로 칠 수 있어 해석이 공격적으로 변합니다.
 - `lost_scan_timeout_seconds`: 마지막 scan이 이 시간 이상 갱신되지 않으면 정지합니다.
 
-LiDAR 값이 `NaN`이면 해당 ray는 완전히 무시합니다. `0` 또는 `scan_obstacle_min_range_m` 이하 값도 무시합니다. `Inf` 또는 `range_max`보다 큰 값은 열린 공간으로 보고 `raytrace_max_range_m`까지만 free space를 표시합니다.
+`scan_callback`은 들어온 LaserScan을 먼저 정리합니다. `Inf`, `NaN`, `0.0` 값은 장애물이나 열린 공간으로 직접 쓰지 않고, 같은 scan 안에서 바로 이전 각도의 유효 range 값으로 대체합니다. 맨 앞처럼 이전 유효 값이 없으면 `NaN`으로 남겨 이후 costmap/free-space/long-range 판단에서 무시합니다. `scan_obstacle_min_range_m` 이하 값과 `range_max`보다 큰 값도 costmap 판단에는 쓰지 않습니다.
 
 ### Local Costmap
 
@@ -165,6 +168,19 @@ LiDAR 값이 `NaN`이면 해당 ray는 완전히 무시합니다. `0` 또는 `sc
 - `cost_smooth_weight`: 직전 `angular_z`와의 차이 감점입니다. 올리면 좌우 흔들림이 줄지만 반응이 느려질 수 있습니다.
 - `cost_lateral_weight`: 최종 궤적이 좌우로 벗어나는 정도의 감점입니다. 올리면 중앙 진행성이 강해집니다.
 - `heading_alignment_weight`: start 시 reset한 gyro heading과 후보 최종 heading 차이 감점입니다. 역방향 진행을 줄이는 데 도움됩니다.
+
+### Long-range clearance 보상
+
+- `long_range_clearance_enabled`: 긴 열린 ray 방향 보상을 켤지 정합니다. gap-drive의 장거리 출구 감각을 costmap 점수에 섞는 기능입니다.
+- `long_range_clearance_weight`: 후보 최종 heading이 긴 열린 ray 방향과 가까울 때 주는 보상입니다. 대각선 벽 뒤 출구를 늦게 찾으면 올리고, 옆방으로 빨려 들어가면 낮춥니다.
+- `long_range_clearance_max_range_m`: 긴 ray 판단에 사용할 최대 거리입니다. 이 값을 넘는 유효 range는 같은 최대 열린 거리로 봅니다.
+- `long_range_clearance_min_range_m`: 이 거리보다 짧은 ray는 긴 출구 후보로 보지 않습니다.
+- `long_range_clearance_search_deg`: 현재 로봇 기준에서 start heading 방향 주변 몇 도까지 긴 출구 후보를 찾을지 정합니다. 너무 넓으면 옆방까지 목표로 잡고, 너무 좁으면 회전 후 출구를 놓칩니다.
+- `long_range_clearance_window_deg`: 단일 ray가 아니라 해당 중심 주변 반각 안의 최소 거리를 함께 봅니다. 올리면 로봇 폭보다 좁은 틈에 덜 속지만, 좁은 문을 놓칠 수 있습니다.
+- `long_range_clearance_alignment_deg`: 후보 궤적 최종 heading과 긴 열린 ray 방향의 오차가 이 각도 안에 들어올 때 보상을 줍니다.
+- `long_range_clearance_start_bias`: 긴 ray 후보를 고를 때 start heading에 가까운 방향을 얼마나 선호할지 정합니다.
+
+RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함께 초록색 `long_range_target` 선이 표시됩니다. 터미널 로그의 `long=yes 15deg/1.50m`는 현재 선택된 장거리 열린 방향과 거리를 뜻합니다.
 
 ### 좁은 통로 모드
 
@@ -199,6 +215,8 @@ LiDAR 값이 `NaN`이면 해당 ray는 완전히 무시합니다. `0` 또는 `sc
 - `stuck_turn_speed`: 후진 후 제자리 회전 속도입니다.
 - `stuck_turn_seconds`: 후진 후 제자리 회전 시간입니다.
 - `stuck_cooldown_seconds`: stuck 복구 직후 다시 stuck 복구에 들어가기 전 대기 시간입니다.
+- `blocked_recovery_enabled`: `BLOCKED_TURN` 또는 `EMERGENCY_TURN`이 일정 시간 지속될 때 후진/회전 복구를 켭니다.
+- `blocked_recovery_hold_seconds`: 막힘 회전 상태가 이 시간 이상 지속되면 `BLOCKED_BACKUP`으로 들어갑니다. 너무 낮으면 불필요하게 후진하고, 너무 높으면 제자리 회전이 길어집니다.
 
 ## gap_drive 대비 핵심 차이
 
