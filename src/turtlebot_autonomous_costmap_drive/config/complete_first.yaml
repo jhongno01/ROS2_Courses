@@ -22,9 +22,9 @@ turtlebot_autonomous_costmap_drive:
     recovery_flip_seconds: 3.5
     prefer_left_recovery: true
 
-    emergency_stop_distance_m: 0.12
+    emergency_stop_distance_m: 0.125
     front_stop_distance_m: 0.16
-    front_slow_distance_m: 0.40
+    front_slow_distance_m: 0.50
     side_angle_deg: 75.0
     side_window_deg: 18.0
     front_window_deg: 18.0
@@ -32,43 +32,43 @@ turtlebot_autonomous_costmap_drive:
     scan_obstacle_min_range_m: 0.05
     scan_obstacle_max_range_m: 1.8
     raytrace_max_range_m: 1.6
-    lost_scan_timeout_seconds: 1.0
+    lost_scan_timeout_seconds: 2.0
 
-    grid_resolution_m: 0.04
-    grid_forward_m: 2.2
-    grid_back_m: 0.35
+    grid_resolution_m: 0.02
+    grid_forward_m: 4.0
+    grid_back_m: 0.50
     grid_half_width_m: 0.95
-    obstacle_memory_seconds: 1.2
-    obstacle_memory_max_points: 6000
-    robot_radius_m: 0.12
+    obstacle_memory_seconds: 2.0
+    obstacle_memory_max_points: 12000
+    robot_radius_m: 0.105
     inflation_radius_m: 0.02
     lethal_cost_threshold: 75.0
     unknown_cell_cost: 35.0
     allow_unknown_trajectory: true
 
-    trajectory_horizon_s: 3.0
+    trajectory_horizon_s: 1.8
     trajectory_dt_s: 0.10
     angular_sample_count: 51
     turn_slowdown_gain: 0.65
-    progress_reward_weight: 1.8
-    cost_obstacle_weight: 4.0
-    cost_unknown_weight: 0.45
-    cost_turn_weight: 0.45
+    progress_reward_weight: 1.4
+    cost_obstacle_weight: 5.5
+    cost_unknown_weight: 0.35
+    cost_turn_weight: 0.30
     cost_smooth_weight: 0.35
-    cost_lateral_weight: 0.35
-    heading_alignment_weight: 0.55
+    cost_lateral_weight: 0.9
+    heading_alignment_weight: 0.45
 
     long_range_clearance_enabled: true
-    long_range_clearance_weight: 0.65
-    long_range_clearance_max_range_m: 1.8
+    long_range_clearance_weight: 1.00
+    long_range_clearance_max_range_m: 3.0
     long_range_clearance_min_range_m: 0.55
-    long_range_clearance_search_deg: 100.0
+    long_range_clearance_search_deg: 50.0
     long_range_clearance_window_deg: 6.0
     long_range_clearance_alignment_deg: 45.0
-    long_range_clearance_start_bias: 0.35
+    long_range_clearance_start_bias: 0.8
 
     narrow_corridor_enabled: true
-    narrow_corridor_width_m: 0.30
+    narrow_corridor_width_m: 0.38
     narrow_corridor_side_detect_m: 0.16
     narrow_corridor_speed_m_s: 0.06
 
@@ -89,7 +89,7 @@ turtlebot_autonomous_costmap_drive:
     stuck_command_linear_threshold: 0.03
     stuck_odom_linear_threshold: 0.01
     stuck_min_progress_m: 0.03
-    stuck_hold_seconds: 2.0
+    stuck_hold_seconds: 4.0
     stuck_backup_speed: 0.04
     stuck_backup_seconds: 1.2
     stuck_turn_speed: 0.60
@@ -97,4 +97,4 @@ turtlebot_autonomous_costmap_drive:
     stuck_cooldown_seconds: 2.0
 
     blocked_recovery_enabled: true
-    blocked_recovery_hold_seconds: 1.2
+    blocked_recovery_hold_seconds: 3.0
