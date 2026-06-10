@@ -167,6 +167,7 @@ struct CostmapSummary
   int obstacle_points = 0;
   bool has_safe_trajectory = false;
   bool narrow_corridor = false;
+  bool selected_pivot_trajectory = false;
   LongRangeTarget long_range_target;
   NarrowGapTarget narrow_gap_target;
   std::vector<RejectedGapSector> rejected_gap_sectors;
@@ -749,17 +750,23 @@ private:
     if (output.costmap.narrow_gap_target.valid)
     {
       output.mode = "NARROW_GAP_COSTMAP_DRIVE";
-      output.detail = "width-valid gate target, speed limited";
+      output.detail = output.costmap.selected_pivot_trajectory
+                          ? "width-valid gate target, front-close pivot selected"
+                          : "width-valid gate target, speed limited";
     }
     else if (output.costmap.narrow_corridor)
     {
       output.mode = "NARROW_COSTMAP_DRIVE";
-      output.detail = "inflated corridor is passable, speed limited";
+      output.detail = output.costmap.selected_pivot_trajectory
+                          ? "inflated corridor is passable, front-close pivot selected"
+                          : "inflated corridor is passable, speed limited";
     }
     else
     {
       output.mode = "COSTMAP_DRIVE";
-      output.detail = "selected lowest-cost trajectory";
+      output.detail = output.costmap.selected_pivot_trajectory
+                          ? "front-close pivot candidate selected"
+                          : "selected lowest-cost trajectory";
     }
     return output;
   }
@@ -798,16 +805,10 @@ private:
     double best_angular = 0.0;
     double best_avg_cost = 0.0;
     double best_unknown_ratio = 0.0;
+    bool best_is_pivot = false;
     std::vector<Pose2D> best_path;
 
-    for (int i = 0; i < sample_count; ++i)
-    {
-      const double ratio = sample_count == 1 ? 0.0 : static_cast<double>(i) / static_cast<double>(sample_count - 1);
-      const double angular_z = -angular_limit + 2.0 * angular_limit * ratio;
-      const double turn_ratio = clamp_value(std::fabs(angular_z) / angular_limit, 0.0, 1.0);
-      const double turn_scale = clamp_value(1.0 - turn_slowdown_gain_ * turn_ratio, 0.25, 1.0);
-      const double linear_x = clamp_value(base_linear * turn_scale, min_linear_speed_, speed_cap);
-
+    auto evaluate_candidate = [&](double linear_x, double angular_z, bool is_pivot) {
       double score = 0.0;
       double avg_cost = 0.0;
       double unknown_ratio = 0.0;
@@ -834,7 +835,7 @@ private:
         {
           ++output.costmap.rejected_small_gap_trajectories;
         }
-        continue;
+        return;
       }
 
       if (!found || score > best_score)
@@ -845,7 +846,34 @@ private:
         best_angular = angular_z;
         best_avg_cost = avg_cost;
         best_unknown_ratio = unknown_ratio;
+        best_is_pivot = is_pivot;
         best_path = path;
+      }
+    };
+
+    for (int i = 0; i < sample_count; ++i)
+    {
+      const double ratio = sample_count == 1 ? 0.0 : static_cast<double>(i) / static_cast<double>(sample_count - 1);
+      const double angular_z = -angular_limit + 2.0 * angular_limit * ratio;
+      const double turn_ratio = clamp_value(std::fabs(angular_z) / angular_limit, 0.0, 1.0);
+      const double turn_scale = clamp_value(1.0 - turn_slowdown_gain_ * turn_ratio, 0.25, 1.0);
+      const double linear_x = clamp_value(base_linear * turn_scale, min_linear_speed_, speed_cap);
+      evaluate_candidate(linear_x, angular_z, false);
+    }
+
+    const bool front_close_for_pivot = front_ratio < 0.45;
+    if (front_close_for_pivot)
+    {
+      for (int i = 0; i < sample_count; ++i)
+      {
+        const double ratio = sample_count == 1 ? 0.0 : static_cast<double>(i) / static_cast<double>(sample_count - 1);
+        const double angular_z = -angular_limit + 2.0 * angular_limit * ratio;
+        const double turn_ratio = clamp_value(std::fabs(angular_z) / angular_limit, 0.0, 1.0);
+        if (turn_ratio < 0.20)
+        {
+          continue;
+        }
+        evaluate_candidate(0.0, angular_z, true);
       }
     }
 
@@ -859,6 +887,7 @@ private:
     output.costmap.best_avg_cost = best_avg_cost;
     output.costmap.best_unknown_ratio = best_unknown_ratio;
     output.costmap.best_angular_z = best_angular;
+    output.costmap.selected_pivot_trajectory = best_is_pivot;
     output.linear_x = best_linear;
     output.angular_z = best_angular;
     output.selected_path = best_path;
@@ -2720,7 +2749,7 @@ private:
     RCLCPP_INFO(
         this->get_logger(),
         "[%s] enabled=%s imu=%s odom=%s ref=%s tilt=%.1fdeg gyro_yaw=%.1fdeg "
-        "front=%.2fm left=%.2fm right=%.2fm narrow=%s obs=%d traj=%d/%d "
+        "front=%.2fm left=%.2fm right=%.2fm narrow=%s obs=%d traj=%d/%d pivot=%s "
         "score=%.2f avg_cost=%.1f unknown=%.2f long=%s %.0fdeg/%.2fm "
         "gate=%s%s %.0fdeg/%.0fmm/%.2fm "
         "small_gap=%zu/%d "
@@ -2739,6 +2768,7 @@ private:
         output.costmap.obstacle_points,
         output.costmap.evaluated_trajectories,
         output.costmap.rejected_trajectories,
+        output.costmap.selected_pivot_trajectory ? "yes" : "no",
         output.costmap.best_score,
         output.costmap.best_avg_cost,
         output.costmap.best_unknown_ratio,
