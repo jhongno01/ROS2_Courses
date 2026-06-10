@@ -18,7 +18,7 @@
 
 노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. `/scan`의 유효 hit point를 `/odom` pose 기준으로 짧게 저장하고, 제어 주기마다 `base_link` 기준 rolling local costmap으로 다시 변환합니다. 현재 scan ray는 free space로 표시하고, 저장된 obstacle point는 occupied cell로 표시한 뒤 `inflation_radius_m`만큼 추가 안전 cost를 퍼뜨립니다. 실제 로봇 크기인 `robot_radius_m`은 후보 궤적의 원형 footprint 검사에서 적용합니다.
 
-이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 추가로, LiDAR에서 관측된 gap의 boundary 폭과 throat 폭이 모두 `narrow_gap_min_width_m`보다 작으면 그 방향을 통과 불가능 sector로 기록하고 해당 sector를 향하는 궤적도 hard reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수, long-range target 보상, narrow gap target 보상을 합쳐 가장 좋은 궤적을 선택합니다.
+이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 추가로, LiDAR에서 관측된 gap의 boundary 폭이 `narrow_gap_min_width_m`보다 작으면 그 방향을 통과 불가능 sector로 기록하고 해당 sector를 향하는 궤적도 hard reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수, long-range target 보상, narrow gap target 보상을 합쳐 가장 좋은 궤적을 선택합니다. 전방이 가까워질수록 start heading 유지와 long-range target 보상은 자동으로 약해져 C/U자 구조에서 local escape가 우선됩니다.
 
 기본 출력은 TurtleBot3 Foxy에서 흔히 쓰는 `geometry_msgs/msg/Twist` 타입의 `/cmd_vel`입니다. 기존 수업 코드처럼 `/cmd_vel`이 `geometry_msgs/msg/TwistStamped` 타입이어야 하는 환경이면 YAML에서 `cmd_vel_stamped: true`로 바꾸세요.
 
@@ -171,12 +171,12 @@ RViz에서 함께 보면 좋은 토픽입니다.
 - `cost_turn_weight`: 큰 회전량 감점입니다. 올리면 직진성이 강해지고, 낮추면 코너를 더 적극적으로 돕니다.
 - `cost_smooth_weight`: 직전 `angular_z`와의 차이 감점입니다. 올리면 좌우 흔들림이 줄지만 반응이 느려질 수 있습니다.
 - `cost_lateral_weight`: 최종 궤적이 좌우로 벗어나는 정도의 감점입니다. 올리면 중앙 진행성이 강해집니다.
-- `heading_alignment_weight`: start 시 reset한 gyro heading과 후보 최종 heading 차이 감점입니다. 역방향 진행을 줄이는 데 도움됩니다.
+- `heading_alignment_weight`: start 시 reset한 gyro heading과 후보 최종 heading 차이 감점입니다. 역방향 진행을 줄이는 데 도움됩니다. 전방 거리가 `front_slow_distance_m` 안으로 들어오면 이 감점은 front clearance ratio만큼 자동으로 약해집니다.
 
 ### Long-range clearance 보상
 
 - `long_range_clearance_enabled`: 긴 열린 ray 방향 보상을 켤지 정합니다. gap-drive의 장거리 출구 감각을 costmap 점수에 섞는 기능입니다.
-- `long_range_clearance_weight`: 후보 최종 heading이 긴 열린 ray 방향과 가까울 때 주는 보상입니다. 대각선 벽 뒤 출구를 늦게 찾으면 올리고, 옆방으로 빨려 들어가면 낮춥니다.
+- `long_range_clearance_weight`: 후보 최종 heading이 긴 열린 ray 방향과 가까울 때 주는 보상입니다. 대각선 벽 뒤 출구를 늦게 찾으면 올리고, 옆방으로 빨려 들어가면 낮춥니다. 전방이 가까워질수록 이 보상도 front clearance ratio만큼 약해집니다.
 - `long_range_clearance_max_range_m`: 긴 ray 판단에 사용할 최대 거리입니다. 이 값을 넘는 유효 range는 같은 최대 열린 거리로 봅니다.
 - `long_range_clearance_min_range_m`: 이 거리보다 짧은 ray는 긴 출구 후보로 보지 않습니다.
 - `long_range_clearance_search_deg`: 현재 로봇 기준에서 start heading 방향 주변 몇 도까지 긴 출구 후보를 찾을지 정합니다. 너무 넓으면 옆방까지 목표로 잡고, 너무 좁으면 회전 후 출구를 놓칩니다.
@@ -190,13 +190,13 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 
 - `narrow_gap_target_enabled`: gap-drive의 좁은 통로 폭 측정 기능을 costmap 점수에 섞을지 정합니다.
 - `narrow_gap_bonus_weight`: 후보 최종 heading이 검증된 narrow gap 중심과 가까울 때 주는 보상입니다.
-- `narrow_gap_min_width_m`: 코사인법칙 boundary 폭과 가까운 boundary 깊이 기준 throat 폭을 함께 본 보수적 gate 폭이 이 값 이상이어야 통과 가능한 좁은 gate로 봅니다. 일반 costmap 궤적의 hard reject는 boundary 폭과 throat 폭이 둘 다 이 값보다 작아 확실히 통과 불가능할 때만 적용합니다. 현재 `robot_radius_m: 0.105`에서는 `0.23 m` 정도가 시작점입니다.
+- `narrow_gap_min_width_m`: 코사인법칙으로 계산한 좌우 boundary 폭이 이 값 이상이어야 통과 가능한 좁은 gate로 봅니다. 이 값보다 작은 관측 gap 방향은 일반 costmap 궤적에서도 hard reject됩니다. 현재 `robot_radius_m: 0.105`에서는 `0.23 m` 정도가 시작점입니다.
 - `narrow_gap_max_width_m`: 이 값보다 넓은 opening은 narrow gate가 아니라 일반 열린 공간/방으로 보고 gate target에서 제외합니다.
 - `narrow_gap_search_deg`: 로봇 정면 기준 좌우 몇 도까지 gate 후보를 찾을지 정합니다. S자 구조에서는 long-range search보다 넓게 둘 수 있습니다.
 - `narrow_gap_sector_half_width_deg`: 중심 ray 주변 최소 clearance를 확인할 반각입니다.
 - `narrow_gap_boundary_search_deg`: 중심 ray 좌우로 boundary를 찾을 최대 각도입니다.
 - `narrow_gap_boundary_obstacle_max_range_m`: boundary로 인정할 장애물 최대 거리입니다. 올리면 먼 벽도 boundary로 잡고, 낮추면 가까운 구조물만 boundary로 봅니다.
-- `narrow_gap_boundary_drop_m`: 중심 ray에서 좌우로 boundary를 찾을 때, boundary ray가 중심 ray보다 최소 이 거리 이상 가까워야 경계로 인정합니다. 작은 range 흔들림이나 완만한 V자 벽을 gate 경계로 잡지 않기 위한 1차 필터입니다.
+- `narrow_gap_boundary_drop_m`: 중심 ray에서 좌우로 boundary를 찾을 때, boundary ray가 중심 ray보다 최소 이 거리 이상 가까워야 경계로 인정합니다. 작은 range 흔들림이나 완만한 V자 벽을 gate 경계로 잡지 않기 위한 1차 필터입니다. 값을 올리면 가짜 경계가 줄지만 실제 완만한 문턱을 놓칠 수 있습니다.
 - `narrow_gap_min_center_distance_m`: gate 중심 ray가 최소 이 거리 이상 깊어야 합니다.
 - `narrow_gap_min_sector_distance_m`: 중심 주변 섹터의 최소 clearance가 이 값 이상이어야 합니다.
 - `narrow_gap_min_depth_gain_m`: 중심 ray가 좌우 boundary 중 더 먼 쪽보다도 이 거리 이상 깊어야 합니다. V자 코너가 gate로 잡히면 이 값을 올리고, 실제 230~300mm 문틈을 놓치면 낮춥니다.

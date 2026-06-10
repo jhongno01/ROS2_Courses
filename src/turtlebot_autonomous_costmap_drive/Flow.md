@@ -94,7 +94,7 @@ flowchart TD
     K -- "Yes" --> M["COSTMAP_DRIVE or NARROW_COSTMAP_DRIVE"]
 ```
 
-각 후보는 `max_angular_speed` 범위 안에서 샘플링한 `angular_z`와 감속된 `linear_x`를 갖습니다. 후보 궤적은 `trajectory_horizon_s` 동안 `trajectory_dt_s` 간격으로 예측하고, 로봇 반지름 원형 footprint가 lethal 또는 높은 inflation cost를 밟으면 reject합니다. 또한 관측된 gap의 boundary 폭과 throat 폭이 모두 `narrow_gap_min_width_m`보다 작고 중심 ray가 충분히 깊으면 통과 불가능 gap sector로 기록하며, 그 sector를 향하는 후보 궤적도 hard reject합니다.
+각 후보는 `max_angular_speed` 범위 안에서 샘플링한 `angular_z`와 감속된 `linear_x`를 갖습니다. 후보 궤적은 `trajectory_horizon_s` 동안 `trajectory_dt_s` 간격으로 예측하고, 로봇 반지름 원형 footprint가 lethal 또는 높은 inflation cost를 밟으면 reject합니다. 또한 관측된 gap의 boundary 폭이 `narrow_gap_min_width_m`보다 작고 중심 ray가 충분히 깊으면 통과 불가능 gap sector로 기록하며, 그 sector를 향하는 후보 궤적도 hard reject합니다.
 
 점수는 아래 항목을 합쳐 계산합니다.
 
@@ -104,13 +104,13 @@ flowchart TD
 - 큰 회전량 감점
 - 직전 명령과의 급격한 변화 감점
 - 좌우로 크게 벗어나는 lateral drift 감점
-- start heading 기준에서 크게 벗어나는 heading 감점
-- start heading에 가까우면서 멀리 열린 ray 방향과 후보 최종 heading이 가까울 때 주는 long-range clearance 보상
+- start heading 기준에서 크게 벗어나는 heading 감점. 단, 전방이 가까워질수록 front clearance ratio만큼 약해짐
+- start heading에 가까우면서 멀리 열린 ray 방향과 후보 최종 heading이 가까울 때 주는 long-range clearance 보상. 단, 전방이 가까워질수록 front clearance ratio만큼 약해짐
 - 코사인법칙으로 폭이 검증된 narrow gap 중심과 후보 최종 heading이 가까울 때 주는 gate 보상
 
-Long-range target은 sanitize된 현재 scan에서 `long_range_clearance_search_deg` 범위 안을 훑어 찾습니다. 단일 ray만 믿지 않고 `long_range_clearance_window_deg` 반각 안의 최소 거리를 함께 보며, 후보 궤적의 최종 heading이 이 target에 가까우면 `long_range_clearance_weight`만큼 보상을 받습니다. RViz에서는 초록색 `long_range_target` 선으로 표시됩니다.
+Long-range target은 sanitize된 현재 scan에서 `long_range_clearance_search_deg` 범위 안을 훑어 찾습니다. 단일 ray만 믿지 않고 `long_range_clearance_window_deg` 반각 안의 최소 거리를 함께 보며, 후보 궤적의 최종 heading이 이 target에 가까우면 `long_range_clearance_weight`만큼 보상을 받습니다. 다만 전방 장애물이 가까우면 이 보상과 start heading 유지 감점이 front clearance ratio만큼 줄어 C/U자 구조에서 local escape가 우선됩니다. RViz에서는 초록색 `long_range_target` 선으로 표시됩니다.
 
-Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 이때 range 차이 때문에 대각/V자 벽의 폭이 과대평가되지 않도록 가까운 boundary 깊이에서의 throat 폭도 함께 계산하고, 둘 중 작은 값을 gate 폭으로 씁니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 좌우 boundary 중 더 먼 쪽보다 `narrow_gap_min_depth_gain_m` 이상 깊으면 gate로 인정합니다. 반대로 boundary 폭과 throat 폭이 둘 다 `narrow_gap_min_width_m`보다 작으면 passable target이 아니라 rejected gap sector가 되어 일반 trajectory도 그쪽으로 가지 못합니다. 같은 gate가 비슷한 각도에 계속 보이면 `narrow_gap_hold_seconds` 동안 hysteresis를 적용해 S자/방 구조에서 target이 매 프레임 튀는 것을 줄입니다.
+Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 좌우 boundary 중 더 먼 쪽보다 `narrow_gap_min_depth_gain_m` 이상 깊으면 gate로 인정합니다. 반대로 boundary 폭이 `narrow_gap_min_width_m`보다 작으면 passable target이 아니라 rejected gap sector가 되어 일반 trajectory도 그쪽으로 가지 못합니다. 같은 gate가 비슷한 각도에 계속 보이면 `narrow_gap_hold_seconds` 동안 hysteresis를 적용해 S자/방 구조에서 target이 매 프레임 튀는 것을 줄입니다.
 
 ## 주행 모드
 

@@ -75,7 +75,7 @@ turtlebot_autonomous_costmap_drive:
     narrow_gap_sector_half_width_deg: 10.0
     narrow_gap_boundary_search_deg: 45.0
     narrow_gap_boundary_obstacle_max_range_m: 0.80
-    narrow_gap_boundary_drop_m: 0.05
+    narrow_gap_boundary_drop_m: 0.08
     narrow_gap_min_center_distance_m: 0.30
     narrow_gap_min_sector_distance_m: 0.08
     narrow_gap_min_depth_gain_m: 0.25
