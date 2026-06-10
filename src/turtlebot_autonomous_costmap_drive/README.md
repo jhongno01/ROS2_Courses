@@ -176,7 +176,7 @@ RViz에서 함께 보면 좋은 토픽입니다.
 ### Long-range clearance 보상
 
 - `long_range_clearance_enabled`: 긴 열린 ray 방향 보상을 켤지 정합니다. gap-drive의 장거리 출구 감각을 costmap 점수에 섞는 기능입니다.
-- `long_range_clearance_weight`: 후보 최종 heading이 긴 열린 ray 방향과 가까울 때 주는 보상입니다. 대각선 벽 뒤 출구를 늦게 찾으면 올리고, 옆방으로 빨려 들어가면 낮춥니다. 전방이 가까워질수록 이 보상도 front clearance ratio만큼 약해집니다.
+- `long_range_clearance_weight`: 후보 최종 heading이 긴 열린 ray 방향과 가까울 때 주는 보상입니다. 대각선 벽 뒤 출구를 늦게 찾으면 올리고, 옆방으로 빨려 들어가면 낮춥니다. 전방이 가까워질수록 이 보상도 front clearance ratio만큼 약해집니다. 폭 부족으로 hard reject된 small gap 각도 범위는 long-range 후보에서도 제외됩니다.
 - `long_range_clearance_max_range_m`: 긴 ray 판단에 사용할 최대 거리입니다. 이 값을 넘는 유효 range는 같은 최대 열린 거리로 봅니다.
 - `long_range_clearance_min_range_m`: 이 거리보다 짧은 ray는 긴 출구 후보로 보지 않습니다.
 - `long_range_clearance_search_deg`: 현재 로봇 기준에서 start heading 방향 주변 몇 도까지 긴 출구 후보를 찾을지 정합니다. 너무 넓으면 옆방까지 목표로 잡고, 너무 좁으면 회전 후 출구를 놓칩니다.
@@ -184,7 +184,7 @@ RViz에서 함께 보면 좋은 토픽입니다.
 - `long_range_clearance_alignment_deg`: 후보 궤적 최종 heading과 긴 열린 ray 방향의 오차가 이 각도 안에 들어올 때 보상을 줍니다.
 - `long_range_clearance_start_bias`: 긴 ray 후보를 고를 때 start heading에 가까운 방향을 얼마나 선호할지 정합니다.
 
-RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함께 초록색 `long_range_target` 선이 표시됩니다. 터미널 로그의 `long=yes 15deg/1.50m`는 현재 선택된 장거리 열린 방향과 거리를 뜻합니다.
+RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함께 초록색 `long_range_target` 선이 표시됩니다. 터미널 로그의 `long=yes 15deg/1.50m`는 현재 선택된 장거리 열린 방향과 거리를 뜻합니다. 빨간색 rejected gap 폭과 같은 각도에 초록선이 겹치면 안 됩니다.
 
 ### Narrow gap/gate target 보상
 
