@@ -16,7 +16,7 @@ turtlebot_autonomous_costmap_drive:
     report_period_ms: 1000
 
     max_linear_speed: 0.15
-    min_linear_speed: 0.02
+    min_linear_speed: 0.02 # 0.02
     max_angular_speed: 0.85
     recovery_turn_speed: 0.75
     recovery_flip_seconds: 3.5
@@ -24,7 +24,7 @@ turtlebot_autonomous_costmap_drive:
 
     emergency_stop_distance_m: 0.125
     front_stop_distance_m: 0.16
-    front_slow_distance_m: 0.50
+    front_slow_distance_m: 0.70
     side_angle_deg: 75.0
     side_window_deg: 18.0
     front_window_deg: 28.0 # defalut 18
@@ -49,26 +49,26 @@ turtlebot_autonomous_costmap_drive:
     trajectory_horizon_s: 1.8
     trajectory_dt_s: 0.10
     angular_sample_count: 51
-    turn_slowdown_gain: 0.50
+    turn_slowdown_gain: 0.50 # 0.50
     progress_reward_weight: 0.8
     cost_obstacle_weight: 8.0
     cost_unknown_weight: 0.45
-    cost_turn_weight: 0.25
-    cost_smooth_weight: 0.35
-    cost_lateral_weight: 0.9
+    cost_turn_weight: 0.12
+    cost_smooth_weight: 0.20
+    cost_lateral_weight: 0.55
     heading_alignment_weight: 0.45
 
     long_range_clearance_enabled: true
     long_range_clearance_weight: 0.80
     long_range_clearance_max_range_m: 3.0
-    long_range_clearance_min_range_m: 0.55
+    long_range_clearance_min_range_m: 0.70
     long_range_clearance_search_deg: 50.0
     long_range_clearance_window_deg: 6.0
     long_range_clearance_alignment_deg: 45.0
     long_range_clearance_start_bias: 0.5
 
     narrow_gap_target_enabled: true
-    narrow_gap_bonus_weight: 0.40 # 0.6
+    narrow_gap_bonus_weight: 0.60 # 0.6
     narrow_gap_min_width_m: 0.20
     narrow_gap_max_width_m: 0.46
     narrow_gap_search_deg: 100.0
