@@ -110,7 +110,7 @@ flowchart TD
 
 Long-range target은 sanitize된 현재 scan에서 `long_range_clearance_search_deg` 범위 안을 훑어 찾습니다. 단일 ray만 믿지 않고 `long_range_clearance_window_deg` 반각 안의 최소 거리를 함께 보며, 후보 궤적의 최종 heading이 이 target에 가까우면 `long_range_clearance_weight`만큼 보상을 받습니다. RViz에서는 초록색 `long_range_target` 선으로 표시됩니다.
 
-Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 좌우 boundary 중 더 먼 쪽보다 `narrow_gap_min_depth_gain_m` 이상 깊으면 gate로 인정합니다. 이 조건이 V자 코너를 좁은 출구로 오인하는 것을 줄입니다. 같은 gate가 비슷한 각도에 계속 보이면 `narrow_gap_hold_seconds` 동안 hysteresis를 적용해 S자/방 구조에서 target이 매 프레임 튀는 것을 줄입니다.
+Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 이때 range 차이 때문에 대각/V자 벽의 폭이 과대평가되지 않도록 가까운 boundary 깊이에서의 throat 폭도 함께 계산하고, 둘 중 작은 값을 gate 폭으로 씁니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 좌우 boundary 중 더 먼 쪽보다 `narrow_gap_min_depth_gain_m` 이상 깊으면 gate로 인정합니다. 같은 gate가 비슷한 각도에 계속 보이면 `narrow_gap_hold_seconds` 동안 hysteresis를 적용해 S자/방 구조에서 target이 매 프레임 튀는 것을 줄입니다.
 
 ## 주행 모드
 
@@ -137,7 +137,7 @@ Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고
 
 1. Costmap 기본 로직이 `COSTMAP_DRIVE`, `NARROW_COSTMAP_DRIVE`, `BLOCKED_TURN`, `EMERGENCY_TURN` 중 하나를 만듭니다.
 2. `apply_reverse_guard`가 필요하면 `REVERSE_RECOVERY`로 선속도 0, 회전 명령을 덮어씁니다.
-3. `apply_stuck_recovery`가 막힘 회전 지속 또는 odom stuck을 감지하면 `BLOCKED_BACKUP`, `BLOCKED_ESCAPE_TURN`, `STUCK_BACKUP`, `STUCK_TURN`으로 다시 덮어씁니다.
+3. `apply_stuck_recovery`가 막힘 회전 지속 또는 odom stuck을 감지하면 `BLOCKED_BACKUP`, `BLOCKED_ESCAPE_TURN`, `STUCK_BACKUP`, `STUCK_TURN`으로 다시 덮어씁니다. 후진은 local costmap에서 뒤쪽 짧은 경로가 clear할 때만 수행하고, 뒤가 장애물/unknown이면 바로 turn 단계로 넘어갑니다.
 
 따라서 로그의 최종 mode는 마지막 안전장치 기준입니다. 예를 들어 costmap상 안전한 궤적이 있어도 odom이 움직이지 않으면 최종 mode는 `STUCK_BACKUP`이 됩니다.
 

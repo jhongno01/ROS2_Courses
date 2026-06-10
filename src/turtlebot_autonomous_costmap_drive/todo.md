@@ -7,6 +7,8 @@
 - `BLOCKED_TURN`/`EMERGENCY_TURN` 장기 지속 시 `BLOCKED_BACKUP -> BLOCKED_ESCAPE_TURN` 복구 추가.
 - Gap-drive의 코사인법칙 gap width 측정을 costmap 쪽 `narrow_gap_target`으로 이식.
 - V자 코너 오인 방지를 위해 gate 중심 ray가 좌우 boundary 중 더 먼 쪽보다 충분히 깊을 때만 gate로 인정하도록 조정.
+- 대각/V자 벽에서 boundary 거리 차이로 gate 폭이 과대평가되지 않게 throat 폭도 함께 검사.
+- blocked/stuck backup 직전 뒤쪽 local costmap footprint가 clear하지 않으면 후진하지 않고 turn 단계로 전환.
 - RViz marker:
   - 파란색: 최종 선택 trajectory
   - 초록색: long-range target

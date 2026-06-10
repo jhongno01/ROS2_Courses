@@ -127,6 +127,8 @@ struct GapWidthMeasurement
   double right_angle_rad = 0.0;
   double left_range_m = 0.0;
   double right_range_m = 0.0;
+  double boundary_width_m = 0.0;
+  double throat_width_m = 0.0;
   double width_m = 0.0;
 };
 
@@ -693,7 +695,7 @@ private:
     output = compute_costmap_drive_output(*scan, costmap, safety);
     annotate_output(output, safety);
     apply_reverse_guard(output, now);
-    apply_stuck_recovery(output, now);
+    apply_stuck_recovery(output, now, costmap);
 
     publish_trajectory_markers(output);
     publish_velocity(output.linear_x, output.angular_z);
@@ -1247,12 +1249,16 @@ private:
 
     const double angle_between =
         std::fabs(normalize_angle_rad(measurement.left_angle_rad - measurement.right_angle_rad));
-    const double width_squared =
+    const double boundary_width_squared =
         measurement.left_range_m * measurement.left_range_m +
         measurement.right_range_m * measurement.right_range_m -
         2.0 * measurement.left_range_m * measurement.right_range_m * std::cos(angle_between);
 
-    measurement.width_m = std::sqrt(std::max(0.0, width_squared));
+    measurement.boundary_width_m = std::sqrt(std::max(0.0, boundary_width_squared));
+    const double near_boundary_range =
+        std::min(measurement.left_range_m, measurement.right_range_m);
+    measurement.throat_width_m = 2.0 * near_boundary_range * std::sin(0.5 * angle_between);
+    measurement.width_m = std::min(measurement.boundary_width_m, measurement.throat_width_m);
     measurement.measured = true;
     return measurement;
   }
@@ -1957,11 +1963,14 @@ private:
     }
   }
 
-  void apply_stuck_recovery(DriveOutput &output, const rclcpp::Time &now)
+  void apply_stuck_recovery(
+      DriveOutput &output,
+      const rclcpp::Time &now,
+      const LocalCostmap &costmap)
   {
     if (stuck_recovery_phase_ != StuckRecoveryPhase::IDLE)
     {
-      update_stuck_recovery_command(output, now);
+      update_stuck_recovery_command(output, now, costmap);
       return;
     }
 
@@ -1979,7 +1988,7 @@ private:
 
     if (blocked_recovery_enabled_ && blocked_mode)
     {
-      apply_blocked_recovery_candidate(output, now);
+      apply_blocked_recovery_candidate(output, now, costmap);
       return;
     }
 
@@ -2040,7 +2049,7 @@ private:
     if ((now - stuck_candidate_started_at_).seconds() >= stuck_hold_seconds_)
     {
       start_recovery(output, now, RecoverySource::STUCK);
-      update_stuck_recovery_command(output, now);
+      update_stuck_recovery_command(output, now, costmap);
     }
   }
 
@@ -2049,7 +2058,10 @@ private:
     return mode == "BLOCKED_TURN" || mode == "EMERGENCY_TURN";
   }
 
-  void apply_blocked_recovery_candidate(DriveOutput &output, const rclcpp::Time &now)
+  void apply_blocked_recovery_candidate(
+      DriveOutput &output,
+      const rclcpp::Time &now,
+      const LocalCostmap &costmap)
   {
     stuck_candidate_active_ = false;
 
@@ -2064,7 +2076,7 @@ private:
         blocked_recovery_hold_seconds_)
     {
       start_recovery(output, now, RecoverySource::BLOCKED);
-      update_stuck_recovery_command(output, now);
+      update_stuck_recovery_command(output, now, costmap);
     }
   }
 
@@ -2093,9 +2105,20 @@ private:
     return summary.left_m > summary.right_m ? 1 : -1;
   }
 
-  void update_stuck_recovery_command(DriveOutput &output, const rclcpp::Time &now)
+  void update_stuck_recovery_command(
+      DriveOutput &output,
+      const rclcpp::Time &now,
+      const LocalCostmap &costmap)
   {
     double phase_elapsed = (now - stuck_phase_started_at_).seconds();
+
+    if (stuck_recovery_phase_ == StuckRecoveryPhase::BACKUP &&
+        !backup_path_is_clear(costmap))
+    {
+      stuck_recovery_phase_ = StuckRecoveryPhase::TURN;
+      stuck_phase_started_at_ = now;
+      phase_elapsed = 0.0;
+    }
 
     if (stuck_recovery_phase_ == StuckRecoveryPhase::BACKUP &&
         phase_elapsed >= stuck_backup_seconds_)
@@ -2140,14 +2163,87 @@ private:
       if (recovery_source_ == RecoverySource::BLOCKED)
       {
         output.mode = "BLOCKED_ESCAPE_TURN";
-        output.detail = "turning after blocked backup";
+        output.detail = "turning after blocked backup or unsafe reverse";
       }
       else
       {
         output.mode = "STUCK_TURN";
-        output.detail = "turning after backup";
+        output.detail = "turning after backup or unsafe reverse";
       }
     }
+  }
+
+  bool backup_path_is_clear(const LocalCostmap &costmap) const
+  {
+    const double backup_speed = std::fabs(stuck_backup_speed_);
+    const double backup_duration = std::max(0.0, stuck_backup_seconds_);
+    const double backup_distance = backup_speed * backup_duration;
+    if (backup_distance <= 1e-6)
+    {
+      return false;
+    }
+
+    const double step_distance = std::max(0.01, costmap.resolution);
+    const int steps =
+        std::max(1, static_cast<int>(std::ceil(backup_distance / step_distance)));
+    for (int step = 0; step <= steps; ++step)
+    {
+      const double ratio = static_cast<double>(step) / static_cast<double>(steps);
+      const double x = -backup_distance * ratio;
+      if (!backup_footprint_is_clear(costmap, x, 0.0))
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool backup_footprint_is_clear(
+      const LocalCostmap &costmap,
+      double x,
+      double y) const
+  {
+    const int perimeter_samples = 12;
+    if (!backup_cell_is_clear(costmap, x, y))
+    {
+      return false;
+    }
+
+    for (int i = 0; i < perimeter_samples; ++i)
+    {
+      const double angle = kTwoPi * static_cast<double>(i) / static_cast<double>(perimeter_samples);
+      const double px = x + robot_radius_m_ * std::cos(angle);
+      const double py = y + robot_radius_m_ * std::sin(angle);
+      if (!backup_cell_is_clear(costmap, px, py))
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool backup_cell_is_clear(
+      const LocalCostmap &costmap,
+      double x,
+      double y) const
+  {
+    int gx = 0;
+    int gy = 0;
+    if (!world_to_grid(costmap, x, y, gx, gy))
+    {
+      return false;
+    }
+
+    const int index = gy * costmap.width + gx;
+    if (index < 0 || index >= static_cast<int>(costmap.occupancy.size()))
+    {
+      return false;
+    }
+    if (costmap.occupancy[static_cast<std::size_t>(index)] < 0)
+    {
+      return false;
+    }
+    return costmap.cost[static_cast<std::size_t>(index)] < lethal_cost_threshold_;
   }
 
   void publish_local_costmap(const LocalCostmap &costmap)

@@ -190,13 +190,13 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 
 - `narrow_gap_target_enabled`: gap-drive의 좁은 통로 폭 측정 기능을 costmap 점수에 섞을지 정합니다.
 - `narrow_gap_bonus_weight`: 후보 최종 heading이 검증된 narrow gap 중심과 가까울 때 주는 보상입니다.
-- `narrow_gap_min_width_m`: 코사인법칙으로 계산한 gate 폭이 이 값 이상이어야 통과 가능한 좁은 gate로 봅니다. 현재 `robot_radius_m: 0.105`에서는 `0.23 m` 정도가 시작점입니다.
+- `narrow_gap_min_width_m`: 코사인법칙 boundary 폭과 가까운 boundary 깊이 기준 throat 폭을 함께 본 보수적 gate 폭이 이 값 이상이어야 통과 가능한 좁은 gate로 봅니다. 현재 `robot_radius_m: 0.105`에서는 `0.23 m` 정도가 시작점입니다.
 - `narrow_gap_max_width_m`: 이 값보다 넓은 opening은 narrow gate가 아니라 일반 열린 공간/방으로 보고 gate target에서 제외합니다.
 - `narrow_gap_search_deg`: 로봇 정면 기준 좌우 몇 도까지 gate 후보를 찾을지 정합니다. S자 구조에서는 long-range search보다 넓게 둘 수 있습니다.
 - `narrow_gap_sector_half_width_deg`: 중심 ray 주변 최소 clearance를 확인할 반각입니다.
 - `narrow_gap_boundary_search_deg`: 중심 ray 좌우로 boundary를 찾을 최대 각도입니다.
 - `narrow_gap_boundary_obstacle_max_range_m`: boundary로 인정할 장애물 최대 거리입니다. 올리면 먼 벽도 boundary로 잡고, 낮추면 가까운 구조물만 boundary로 봅니다.
-- `narrow_gap_boundary_drop_m`: 중심 ray보다 boundary ray가 이 거리 이상 짧아야 gap 경계로 인정합니다.
+- `narrow_gap_boundary_drop_m`: 중심 ray에서 좌우로 boundary를 찾을 때, boundary ray가 중심 ray보다 최소 이 거리 이상 가까워야 경계로 인정합니다. 작은 range 흔들림이나 완만한 V자 벽을 gate 경계로 잡지 않기 위한 1차 필터입니다.
 - `narrow_gap_min_center_distance_m`: gate 중심 ray가 최소 이 거리 이상 깊어야 합니다.
 - `narrow_gap_min_sector_distance_m`: 중심 주변 섹터의 최소 clearance가 이 값 이상이어야 합니다.
 - `narrow_gap_min_depth_gain_m`: 중심 ray가 좌우 boundary 중 더 먼 쪽보다도 이 거리 이상 깊어야 합니다. V자 코너가 gate로 잡히면 이 값을 올리고, 실제 230~300mm 문틈을 놓치면 낮춥니다.
@@ -241,7 +241,7 @@ RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap �
 - `stuck_turn_seconds`: 후진 후 제자리 회전 시간입니다.
 - `stuck_cooldown_seconds`: stuck 복구 직후 다시 stuck 복구에 들어가기 전 대기 시간입니다.
 - `blocked_recovery_enabled`: `BLOCKED_TURN` 또는 `EMERGENCY_TURN`이 일정 시간 지속될 때 후진/회전 복구를 켭니다.
-- `blocked_recovery_hold_seconds`: 막힘 회전 상태가 이 시간 이상 지속되면 `BLOCKED_BACKUP`으로 들어갑니다. 너무 낮으면 불필요하게 후진하고, 너무 높으면 제자리 회전이 길어집니다.
+- `blocked_recovery_hold_seconds`: 막힘 회전 상태가 이 시간 이상 지속되면 `BLOCKED_BACKUP`을 시도합니다. 후진 직전 local costmap에서 뒤쪽 짧은 경로와 footprint가 clear인지 확인하며, 뒤가 장애물/unknown이면 후진을 건너뛰고 `BLOCKED_ESCAPE_TURN`으로 넘어갑니다. 너무 낮으면 불필요하게 복구가 걸리고, 너무 높으면 제자리 회전이 길어집니다.
 
 ## gap_drive 대비 핵심 차이
 
