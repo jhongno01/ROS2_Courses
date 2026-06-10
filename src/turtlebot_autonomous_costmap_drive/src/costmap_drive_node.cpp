@@ -128,7 +128,6 @@ struct GapWidthMeasurement
   double left_range_m = 0.0;
   double right_range_m = 0.0;
   double boundary_width_m = 0.0;
-  double throat_width_m = 0.0;
   double width_m = 0.0;
 };
 
@@ -278,7 +277,7 @@ public:
         narrow_gap_boundary_obstacle_max_range_m_(this->declare_parameter<double>(
             "narrow_gap_boundary_obstacle_max_range_m", 1.25)),
         narrow_gap_boundary_drop_m_(
-            this->declare_parameter<double>("narrow_gap_boundary_drop_m", 0.05)),
+            this->declare_parameter<double>("narrow_gap_boundary_drop_m", 0.08)),
         narrow_gap_min_center_distance_m_(
             this->declare_parameter<double>("narrow_gap_min_center_distance_m", 0.30)),
         narrow_gap_min_sector_distance_m_(
@@ -821,6 +820,7 @@ private:
               output.costmap.long_range_target,
               output.costmap.narrow_gap_target,
               output.costmap.rejected_gap_sectors,
+              front_ratio,
               linear_x,
               angular_z,
               score,
@@ -871,6 +871,7 @@ private:
       const LongRangeTarget &long_range_target,
       const NarrowGapTarget &narrow_gap_target,
       const std::vector<RejectedGapSector> &rejected_gap_sectors,
+      double global_preference_scale,
       double linear_x,
       double angular_z,
       double &score,
@@ -944,6 +945,7 @@ private:
           0.0,
           1.0);
       long_range_reward =
+          global_preference_scale *
           long_range_clearance_weight_ * clearance_ratio * target_alignment;
     }
     double narrow_gap_reward = 0.0;
@@ -978,7 +980,7 @@ private:
         cost_turn_weight_ * turn_ratio -
         cost_smooth_weight_ * smooth_ratio -
         cost_lateral_weight_ * std::fabs(pose.y) -
-        heading_alignment_weight_ * heading_ratio +
+        global_preference_scale * heading_alignment_weight_ * heading_ratio +
         long_range_reward +
         narrow_gap_reward;
 
@@ -1402,10 +1404,7 @@ private:
         2.0 * measurement.left_range_m * measurement.right_range_m * std::cos(angle_between);
 
     measurement.boundary_width_m = std::sqrt(std::max(0.0, boundary_width_squared));
-    const double near_boundary_range =
-        std::min(measurement.left_range_m, measurement.right_range_m);
-    measurement.throat_width_m = 2.0 * near_boundary_range * std::sin(0.5 * angle_between);
-    measurement.width_m = std::min(measurement.boundary_width_m, measurement.throat_width_m);
+    measurement.width_m = measurement.boundary_width_m;
     measurement.measured = true;
     return measurement;
   }
@@ -1454,10 +1453,7 @@ private:
     {
       return false;
     }
-    const bool confidently_too_small =
-        measurement.boundary_width_m < narrow_gap_min_width_m_ &&
-        measurement.throat_width_m < narrow_gap_min_width_m_;
-    if (!confidently_too_small)
+    if (measurement.boundary_width_m >= narrow_gap_min_width_m_)
     {
       return false;
     }
