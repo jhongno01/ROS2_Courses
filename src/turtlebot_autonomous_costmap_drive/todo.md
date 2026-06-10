@@ -8,6 +8,7 @@
 - Gap-drive의 코사인법칙 gap width 측정을 costmap 쪽 `narrow_gap_target`으로 이식.
 - V자 코너 오인 방지를 위해 gate 중심 ray가 좌우 boundary 중 더 먼 쪽보다 충분히 깊을 때만 gate로 인정하도록 조정.
 - 대각/V자 벽에서 boundary 거리 차이로 gate 폭이 과대평가되지 않게 throat 폭도 함께 검사.
+- `narrow_gap_min_width_m`보다 작은 관측 gap은 일반 costmap trajectory에서도 hard reject하도록 추가.
 - blocked/stuck backup 직전 뒤쪽 local costmap footprint가 clear하지 않으면 후진하지 않고 turn 단계로 전환.
 - RViz marker:
   - 파란색: 최종 선택 trajectory
@@ -29,3 +30,4 @@
 - 현재 `robot_radius_m: 0.105`, `narrow_gap_min_width_m: 0.23`.
 - 이론상 로봇 지름은 약 210mm, gate 인정 시작은 230mm.
 - 실제 안정 통과 폭은 LiDAR/grid 오차까지 고려해서 250~290mm 정도로 보고 테스트.
+- 100~150mm gap 쪽에는 RViz 빨간 `rejected_gap_sector`가 떠야 하고, 260mm gap 쪽에는 빨간 marker가 뜨지 않아야 합니다.

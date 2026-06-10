@@ -144,6 +144,14 @@ struct NarrowGapTarget
   GapWidthMeasurement width_measurement;
 };
 
+struct RejectedGapSector
+{
+  double angle_rad = 0.0;
+  double half_width_rad = 0.0;
+  double center_range_m = 0.0;
+  double width_m = 0.0;
+};
+
 struct CostmapSummary
 {
   double front_m = 0.0;
@@ -155,11 +163,13 @@ struct CostmapSummary
   double best_angular_z = 0.0;
   int evaluated_trajectories = 0;
   int rejected_trajectories = 0;
+  int rejected_small_gap_trajectories = 0;
   int obstacle_points = 0;
   bool has_safe_trajectory = false;
   bool narrow_corridor = false;
   LongRangeTarget long_range_target;
   NarrowGapTarget narrow_gap_target;
+  std::vector<RejectedGapSector> rejected_gap_sectors;
 };
 
 struct DriveOutput
@@ -715,6 +725,7 @@ private:
     output.costmap.narrow_corridor = detect_narrow_corridor(output.costmap);
     output.costmap.long_range_target = compute_long_range_target(scan, safety);
     output.costmap.narrow_gap_target = compute_narrow_gap_target(scan);
+    output.costmap.rejected_gap_sectors = compute_rejected_gap_sectors(scan);
 
     if (output.costmap.front_m <= emergency_stop_distance_m_)
     {
@@ -801,20 +812,27 @@ private:
       double avg_cost = 0.0;
       double unknown_ratio = 0.0;
       std::vector<Pose2D> path;
+      bool rejected_by_small_gap = false;
       ++output.costmap.evaluated_trajectories;
       if (!score_trajectory(
               costmap,
               safety,
               output.costmap.long_range_target,
               output.costmap.narrow_gap_target,
+              output.costmap.rejected_gap_sectors,
               linear_x,
               angular_z,
               score,
               avg_cost,
               unknown_ratio,
-              path))
+              path,
+              rejected_by_small_gap))
       {
         ++output.costmap.rejected_trajectories;
+        if (rejected_by_small_gap)
+        {
+          ++output.costmap.rejected_small_gap_trajectories;
+        }
         continue;
       }
 
@@ -851,14 +869,17 @@ private:
       const SafetySnapshot &safety,
       const LongRangeTarget &long_range_target,
       const NarrowGapTarget &narrow_gap_target,
+      const std::vector<RejectedGapSector> &rejected_gap_sectors,
       double linear_x,
       double angular_z,
       double &score,
       double &avg_cost,
       double &unknown_ratio,
-      std::vector<Pose2D> &path) const
+      std::vector<Pose2D> &path,
+      bool &rejected_by_small_gap) const
   {
     Pose2D pose;
+    rejected_by_small_gap = false;
     double cost_sum = 0.0;
     int cost_samples = 0;
     int unknown_samples = 0;
@@ -888,6 +909,12 @@ private:
 
     if (cost_samples == 0)
     {
+      return false;
+    }
+
+    if (trajectory_points_to_rejected_gap(pose, rejected_gap_sectors))
+    {
+      rejected_by_small_gap = true;
       return false;
     }
 
@@ -956,6 +983,47 @@ private:
 
     (void)max_cost;
     return true;
+  }
+
+  bool trajectory_points_to_rejected_gap(
+      const Pose2D &final_pose,
+      const std::vector<RejectedGapSector> &rejected_gap_sectors) const
+  {
+    if (rejected_gap_sectors.empty())
+    {
+      return false;
+    }
+
+    const double endpoint_distance =
+        std::sqrt(final_pose.x * final_pose.x + final_pose.y * final_pose.y);
+    const bool has_endpoint_bearing = endpoint_distance > 0.03;
+    const double endpoint_bearing =
+        has_endpoint_bearing ? std::atan2(final_pose.y, final_pose.x) : 0.0;
+
+    for (const auto &sector : rejected_gap_sectors)
+    {
+      const double missing_width =
+          std::max(0.0, narrow_gap_min_width_m_ - sector.width_m);
+      const double range_for_margin =
+          std::max(0.05, sector.center_range_m);
+      const double width_margin =
+          std::atan2(0.5 * missing_width, range_for_margin);
+      const double angle_margin = std::min(
+          deg_to_rad(std::max(5.0, narrow_gap_alignment_deg_)),
+          sector.half_width_rad + width_margin + deg_to_rad(std::max(1.0, scan_sample_step_deg_)));
+
+      if (std::fabs(normalize_angle_rad(final_pose.yaw - sector.angle_rad)) <= angle_margin)
+      {
+        return true;
+      }
+      if (has_endpoint_bearing &&
+          std::fabs(normalize_angle_rad(endpoint_bearing - sector.angle_rad)) <= angle_margin)
+      {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   bool accumulate_footprint_cost(
@@ -1221,6 +1289,77 @@ private:
     return target;
   }
 
+  std::vector<RejectedGapSector> compute_rejected_gap_sectors(
+      const sensor_msgs::msg::LaserScan &scan) const
+  {
+    std::vector<RejectedGapSector> sectors;
+    if (!narrow_gap_target_enabled_ || scan.ranges.empty() ||
+        std::fabs(scan.angle_increment) < 1e-9)
+    {
+      return sectors;
+    }
+
+    const double search_limit = std::max(1.0, narrow_gap_search_deg_);
+    const double step_deg = std::max(1.0, scan_sample_step_deg_);
+    bool run_active = false;
+    double run_start_deg = 0.0;
+    double run_end_deg = 0.0;
+    double run_min_width_m = std::numeric_limits<double>::infinity();
+    double run_max_center_range_m = 0.0;
+
+    const auto flush_run = [&]() {
+      if (!run_active)
+      {
+        return;
+      }
+
+      RejectedGapSector sector;
+      sector.angle_rad = deg_to_rad(0.5 * (run_start_deg + run_end_deg));
+      sector.half_width_rad =
+          deg_to_rad(std::max(step_deg, 0.5 * (run_end_deg - run_start_deg) + step_deg));
+      sector.center_range_m = run_max_center_range_m;
+      sector.width_m = std::isfinite(run_min_width_m) ? run_min_width_m : 0.0;
+      sectors.push_back(sector);
+
+      run_active = false;
+      run_min_width_m = std::numeric_limits<double>::infinity();
+      run_max_center_range_m = 0.0;
+    };
+
+    for (double angle_deg = -search_limit; angle_deg <= search_limit; angle_deg += step_deg)
+    {
+      double center_range = 0.0;
+      if (!range_at_angle(scan, deg_to_rad(angle_deg), center_range) ||
+          !range_is_usable(scan, center_range))
+      {
+        flush_run();
+        continue;
+      }
+
+      const double sector_clearance =
+          min_range_in_sector(scan, angle_deg, narrow_gap_sector_half_width_deg_);
+      const GapWidthMeasurement width_measurement =
+          measure_narrow_gap_width(scan, angle_deg, center_range);
+      if (!narrow_gap_is_too_small(angle_deg, center_range, sector_clearance, width_measurement))
+      {
+        flush_run();
+        continue;
+      }
+
+      if (!run_active)
+      {
+        run_active = true;
+        run_start_deg = angle_deg;
+      }
+      run_end_deg = angle_deg;
+      run_min_width_m = std::min(run_min_width_m, width_measurement.width_m);
+      run_max_center_range_m = std::max(run_max_center_range_m, center_range);
+    }
+
+    flush_run();
+    return sectors;
+  }
+
   GapWidthMeasurement measure_narrow_gap_width(
       const sensor_msgs::msg::LaserScan &scan,
       double center_deg,
@@ -1279,6 +1418,35 @@ private:
     }
     if (measurement.width_m < narrow_gap_min_width_m_ ||
         measurement.width_m > narrow_gap_max_width_m_)
+    {
+      return false;
+    }
+    if (center_range_m < narrow_gap_min_center_distance_m_ ||
+        sector_clearance_m < narrow_gap_min_sector_distance_m_)
+    {
+      return false;
+    }
+
+    const double farther_boundary_range =
+        std::max(measurement.left_range_m, measurement.right_range_m);
+    return center_range_m >= farther_boundary_range + narrow_gap_min_depth_gain_m_;
+  }
+
+  bool narrow_gap_is_too_small(
+      double center_deg,
+      double center_range_m,
+      double sector_clearance_m,
+      const GapWidthMeasurement &measurement) const
+  {
+    if (!measurement.measured)
+    {
+      return false;
+    }
+    if (std::fabs(center_deg) > narrow_gap_search_deg_)
+    {
+      return false;
+    }
+    if (measurement.width_m >= narrow_gap_min_width_m_)
     {
       return false;
     }
@@ -2436,6 +2604,51 @@ private:
       array.markers.push_back(delete_width_marker);
     }
 
+    if (!output.costmap.rejected_gap_sectors.empty())
+    {
+      visualization_msgs::msg::Marker rejected_marker;
+      rejected_marker.header.stamp = this->now();
+      rejected_marker.header.frame_id = costmap_frame_id_;
+      rejected_marker.ns = "rejected_gap_sector";
+      rejected_marker.id = 5;
+      rejected_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+      rejected_marker.action = visualization_msgs::msg::Marker::ADD;
+      rejected_marker.scale.x = 0.035;
+      rejected_marker.color.r = 1.0f;
+      rejected_marker.color.g = 0.05f;
+      rejected_marker.color.b = 0.05f;
+      rejected_marker.color.a = 0.95f;
+      rejected_marker.lifetime.sec = 0;
+      rejected_marker.lifetime.nanosec = 500000000;
+      rejected_marker.pose.orientation.w = 1.0;
+
+      for (const auto &sector : output.costmap.rejected_gap_sectors)
+      {
+        geometry_msgs::msg::Point origin;
+        origin.x = 0.0;
+        origin.y = 0.0;
+        origin.z = 0.16;
+        rejected_marker.points.push_back(origin);
+
+        geometry_msgs::msg::Point target;
+        target.x = sector.center_range_m * std::cos(sector.angle_rad);
+        target.y = sector.center_range_m * std::sin(sector.angle_rad);
+        target.z = 0.16;
+        rejected_marker.points.push_back(target);
+      }
+      array.markers.push_back(rejected_marker);
+    }
+    else
+    {
+      visualization_msgs::msg::Marker delete_rejected_marker;
+      delete_rejected_marker.header.stamp = this->now();
+      delete_rejected_marker.header.frame_id = costmap_frame_id_;
+      delete_rejected_marker.ns = "rejected_gap_sector";
+      delete_rejected_marker.id = 5;
+      delete_rejected_marker.action = visualization_msgs::msg::Marker::DELETE;
+      array.markers.push_back(delete_rejected_marker);
+    }
+
     trajectory_marker_publisher_->publish(array);
   }
 
@@ -2494,6 +2707,7 @@ private:
         "front=%.2fm left=%.2fm right=%.2fm narrow=%s obs=%d traj=%d/%d "
         "score=%.2f avg_cost=%.1f unknown=%.2f long=%s %.0fdeg/%.2fm "
         "gate=%s%s %.0fdeg/%.0fmm/%.2fm "
+        "small_gap=%zu/%d "
         "target_w=%.2f cmd=(%.2f, %.2f) %s",
         output.mode.c_str(),
         output.enabled_requested ? "yes" : "no",
@@ -2530,6 +2744,8 @@ private:
         output.costmap.narrow_gap_target.valid
             ? output.costmap.narrow_gap_target.center_range_m
             : 0.0,
+        output.costmap.rejected_gap_sectors.size(),
+        output.costmap.rejected_small_gap_trajectories,
         output.costmap.best_angular_z,
         output.linear_x,
         output.angular_z,
