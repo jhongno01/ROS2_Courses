@@ -1454,7 +1454,10 @@ private:
     {
       return false;
     }
-    if (measurement.width_m >= narrow_gap_min_width_m_)
+    const bool confidently_too_small =
+        measurement.boundary_width_m < narrow_gap_min_width_m_ &&
+        measurement.throat_width_m < narrow_gap_min_width_m_;
+    if (!confidently_too_small)
     {
       return false;
     }

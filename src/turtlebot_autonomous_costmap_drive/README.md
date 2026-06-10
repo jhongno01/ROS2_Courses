@@ -18,7 +18,7 @@
 
 노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. `/scan`의 유효 hit point를 `/odom` pose 기준으로 짧게 저장하고, 제어 주기마다 `base_link` 기준 rolling local costmap으로 다시 변환합니다. 현재 scan ray는 free space로 표시하고, 저장된 obstacle point는 occupied cell로 표시한 뒤 `inflation_radius_m`만큼 추가 안전 cost를 퍼뜨립니다. 실제 로봇 크기인 `robot_radius_m`은 후보 궤적의 원형 footprint 검사에서 적용합니다.
 
-이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 추가로, LiDAR에서 관측된 gap 폭이 `narrow_gap_min_width_m`보다 작으면 그 방향을 통과 불가능 sector로 기록하고 해당 sector를 향하는 궤적도 hard reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수, long-range target 보상, narrow gap target 보상을 합쳐 가장 좋은 궤적을 선택합니다.
+이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 추가로, LiDAR에서 관측된 gap의 boundary 폭과 throat 폭이 모두 `narrow_gap_min_width_m`보다 작으면 그 방향을 통과 불가능 sector로 기록하고 해당 sector를 향하는 궤적도 hard reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수, long-range target 보상, narrow gap target 보상을 합쳐 가장 좋은 궤적을 선택합니다.
 
 기본 출력은 TurtleBot3 Foxy에서 흔히 쓰는 `geometry_msgs/msg/Twist` 타입의 `/cmd_vel`입니다. 기존 수업 코드처럼 `/cmd_vel`이 `geometry_msgs/msg/TwistStamped` 타입이어야 하는 환경이면 YAML에서 `cmd_vel_stamped: true`로 바꾸세요.
 
@@ -190,7 +190,7 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 
 - `narrow_gap_target_enabled`: gap-drive의 좁은 통로 폭 측정 기능을 costmap 점수에 섞을지 정합니다.
 - `narrow_gap_bonus_weight`: 후보 최종 heading이 검증된 narrow gap 중심과 가까울 때 주는 보상입니다.
-- `narrow_gap_min_width_m`: 코사인법칙 boundary 폭과 가까운 boundary 깊이 기준 throat 폭을 함께 본 보수적 gate 폭이 이 값 이상이어야 통과 가능한 좁은 gate로 봅니다. 이 값보다 작은 관측 gap 방향은 일반 costmap 궤적에서도 hard reject됩니다. 현재 `robot_radius_m: 0.105`에서는 `0.23 m` 정도가 시작점입니다.
+- `narrow_gap_min_width_m`: 코사인법칙 boundary 폭과 가까운 boundary 깊이 기준 throat 폭을 함께 본 보수적 gate 폭이 이 값 이상이어야 통과 가능한 좁은 gate로 봅니다. 일반 costmap 궤적의 hard reject는 boundary 폭과 throat 폭이 둘 다 이 값보다 작아 확실히 통과 불가능할 때만 적용합니다. 현재 `robot_radius_m: 0.105`에서는 `0.23 m` 정도가 시작점입니다.
 - `narrow_gap_max_width_m`: 이 값보다 넓은 opening은 narrow gate가 아니라 일반 열린 공간/방으로 보고 gate target에서 제외합니다.
 - `narrow_gap_search_deg`: 로봇 정면 기준 좌우 몇 도까지 gate 후보를 찾을지 정합니다. S자 구조에서는 long-range search보다 넓게 둘 수 있습니다.
 - `narrow_gap_sector_half_width_deg`: 중심 ray 주변 최소 clearance를 확인할 반각입니다.
