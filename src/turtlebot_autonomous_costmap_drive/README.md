@@ -18,7 +18,7 @@
 
 노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. `/scan`의 유효 hit point를 `/odom` pose 기준으로 짧게 저장하고, 제어 주기마다 `base_link` 기준 rolling local costmap으로 다시 변환합니다. 현재 scan ray는 free space로 표시하고, 저장된 obstacle point는 occupied cell로 표시한 뒤 `inflation_radius_m`만큼 추가 안전 cost를 퍼뜨립니다. 실제 로봇 크기인 `robot_radius_m`은 후보 궤적의 원형 footprint 검사에서 적용합니다.
 
-이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수를 합쳐 가장 좋은 궤적을 선택합니다.
+이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수, long-range target 보상, narrow gap target 보상을 합쳐 가장 좋은 궤적을 선택합니다.
 
 기본 출력은 TurtleBot3 Foxy에서 흔히 쓰는 `geometry_msgs/msg/Twist` 타입의 `/cmd_vel`입니다. 기존 수업 코드처럼 `/cmd_vel`이 `geometry_msgs/msg/TwistStamped` 타입이어야 하는 환경이면 YAML에서 `cmd_vel_stamped: true`로 바꾸세요.
 
@@ -74,12 +74,15 @@ RViz에서 함께 보면 좋은 토픽입니다.
 - `TILT_STOP`: IMU roll/pitch가 `tilt_stop_deg`를 넘었습니다.
 - `COSTMAP_DRIVE`: local costmap에서 가장 낮은 cost의 전진 궤적을 따라갑니다.
 - `NARROW_COSTMAP_DRIVE`: 양벽이 가까운 통로를 저속으로 통과합니다.
+- `NARROW_GAP_COSTMAP_DRIVE`: 코사인법칙으로 폭이 검증된 좁은 gate를 저속으로 향합니다.
 - `BLOCKED_TURN`: 안전한 전진 궤적이 없어 제자리 회전합니다.
 - `EMERGENCY_TURN`: 전방 장애물이 매우 가까워 즉시 전진을 멈추고 회전합니다.
 - `REVERSE_WARN`: 기준 heading 반대 방향으로 전진 중이지만 아직 hold 시간 전입니다.
 - `REVERSE_RECOVERY`: 기준 heading 쪽으로 제자리 회전합니다.
 - `STUCK_BACKUP`: 전진 명령이 있는데 odom상 진행이 없어 짧게 후진합니다.
 - `STUCK_TURN`: 후진 후 더 여유 있는 방향으로 제자리 회전합니다.
+- `BLOCKED_BACKUP`: 막힘 회전 상태가 오래 지속되어 LiDAR 시야 확보를 위해 짧게 후진합니다.
+- `BLOCKED_ESCAPE_TURN`: blocked backup 후 더 여유 있는 방향으로 짧게 회전합니다.
 
 ## 튜닝 기본 방향
 
@@ -92,7 +95,8 @@ RViz에서 함께 보면 좋은 토픽입니다.
 5. 좌우 흔들림은 `cost_smooth_weight`, `cost_turn_weight`, `max_angular_speed`로 잡습니다.
 6. C/U자 구조에서 늦게 빠져나오면 `trajectory_horizon_s`, `grid_forward_m`, `obstacle_memory_seconds`를 조금 올립니다.
 7. 대각선 벽 뒤의 긴 출구를 늦게 잡으면 `long_range_clearance_weight`, `long_range_clearance_max_range_m`, `long_range_clearance_search_deg`를 조정합니다.
-8. `BLOCKED_TURN`에서 좌우로 계속 반전하면 `blocked_recovery_hold_seconds`, `stuck_backup_seconds`, `stuck_turn_seconds`를 조정합니다.
+8. 좁은 문틈이나 S자 gate를 지나치면 `narrow_gap_bonus_weight`, `narrow_gap_min_width_m`, `narrow_gap_hold_seconds`를 조정합니다.
+9. `BLOCKED_TURN`에서 좌우로 계속 반전하면 `blocked_recovery_hold_seconds`, `stuck_backup_seconds`, `stuck_turn_seconds`를 조정합니다.
 
 튜닝은 한 번에 하나씩 바꾸고 같은 Gazebo world 또는 같은 rosbag replay에서 비교하세요. costmap 방식은 파라미터끼리 상호작용이 크기 때문에 여러 값을 동시에 바꾸면 원인 파악이 어려워집니다.
 
@@ -182,6 +186,27 @@ RViz에서 함께 보면 좋은 토픽입니다.
 
 RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함께 초록색 `long_range_target` 선이 표시됩니다. 터미널 로그의 `long=yes 15deg/1.50m`는 현재 선택된 장거리 열린 방향과 거리를 뜻합니다.
 
+### Narrow gap/gate target 보상
+
+- `narrow_gap_target_enabled`: gap-drive의 좁은 통로 폭 측정 기능을 costmap 점수에 섞을지 정합니다.
+- `narrow_gap_bonus_weight`: 후보 최종 heading이 검증된 narrow gap 중심과 가까울 때 주는 보상입니다.
+- `narrow_gap_min_width_m`: 코사인법칙으로 계산한 gate 폭이 이 값 이상이어야 통과 가능한 좁은 gate로 봅니다. 현재 `robot_radius_m: 0.105`에서는 `0.23 m` 정도가 시작점입니다.
+- `narrow_gap_max_width_m`: 이 값보다 넓은 opening은 narrow gate가 아니라 일반 열린 공간/방으로 보고 gate target에서 제외합니다.
+- `narrow_gap_search_deg`: 로봇 정면 기준 좌우 몇 도까지 gate 후보를 찾을지 정합니다. S자 구조에서는 long-range search보다 넓게 둘 수 있습니다.
+- `narrow_gap_sector_half_width_deg`: 중심 ray 주변 최소 clearance를 확인할 반각입니다.
+- `narrow_gap_boundary_search_deg`: 중심 ray 좌우로 boundary를 찾을 최대 각도입니다.
+- `narrow_gap_boundary_obstacle_max_range_m`: boundary로 인정할 장애물 최대 거리입니다. 올리면 먼 벽도 boundary로 잡고, 낮추면 가까운 구조물만 boundary로 봅니다.
+- `narrow_gap_boundary_drop_m`: 중심 ray보다 boundary ray가 이 거리 이상 짧아야 gap 경계로 인정합니다.
+- `narrow_gap_min_center_distance_m`: gate 중심 ray가 최소 이 거리 이상 깊어야 합니다.
+- `narrow_gap_min_sector_distance_m`: 중심 주변 섹터의 최소 clearance가 이 값 이상이어야 합니다.
+- `narrow_gap_min_depth_gain_m`: 중심 ray가 좌우 boundary 평균보다 이 거리 이상 깊어야 합니다.
+- `narrow_gap_alignment_deg`: 후보 trajectory 최종 heading이 gate 중심과 이 각도 안에 들어오면 보상을 받습니다.
+- `narrow_gap_hold_seconds`: 같은 gate가 비슷한 각도에서 계속 보이면 이 시간 동안 target 선택을 유지해 S자/방 구조에서 target 튐을 줄입니다.
+- `narrow_gap_hold_max_angle_error_deg`: hysteresis로 같은 gate라고 볼 최대 각도 차이입니다.
+- `narrow_gap_speed_m_s`: `NARROW_GAP_COSTMAP_DRIVE`에서 사용할 선속도 상한입니다.
+
+RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭입니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis로 이전 gate를 이어 잡았다는 뜻입니다.
+
 ### 좁은 통로 모드
 
 - `narrow_corridor_enabled`: 양쪽 벽이 가까울 때 저속 좁은 통로 모드를 쓸지 정합니다.
@@ -223,7 +248,7 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 - `gap_drive`: 한 프레임 scan에서 후보 angle의 섹터 최소거리와 gap 폭을 계산합니다.
 - `costmap_drive`: 짧게 누적한 obstacle memory와 현재 free ray로 local grid를 만들고, 로봇 footprint가 지나갈 수 있는 후보 궤적을 평가합니다.
 - `gap_drive`: 작은 틈 뒤 대각 벽처럼 섹터 최소거리 하나가 낮으면 후보가 막힐 수 있습니다.
-- `costmap_drive`: inflated obstacle 사이에 corridor가 남으면 저속으로 통과하고, footprint가 닿는 후보만 reject합니다.
+- `costmap_drive`: inflated obstacle 사이에 corridor가 남으면 저속으로 통과하고, 폭이 검증된 narrow gap target 방향 후보에는 추가 보상을 줍니다.
 - `gap_drive`: 후보 중심 ray가 통과 가능해도 로봇 몸체가 장애물 끝에 걸릴 수 있습니다.
 - `costmap_drive`: 원형 footprint collision check로 edge clipping을 줄입니다.
 

@@ -120,6 +120,28 @@ struct LongRangeTarget
   double score = 0.0;
 };
 
+struct GapWidthMeasurement
+{
+  bool measured = false;
+  double left_angle_rad = 0.0;
+  double right_angle_rad = 0.0;
+  double left_range_m = 0.0;
+  double right_range_m = 0.0;
+  double width_m = 0.0;
+};
+
+struct NarrowGapTarget
+{
+  bool valid = false;
+  bool held = false;
+  double angle_rad = 0.0;
+  double center_range_m = 0.0;
+  double sector_clearance_m = 0.0;
+  double width_m = 0.0;
+  double score = 0.0;
+  GapWidthMeasurement width_measurement;
+};
+
 struct CostmapSummary
 {
   double front_m = 0.0;
@@ -135,6 +157,7 @@ struct CostmapSummary
   bool has_safe_trajectory = false;
   bool narrow_corridor = false;
   LongRangeTarget long_range_target;
+  NarrowGapTarget narrow_gap_target;
 };
 
 struct DriveOutput
@@ -230,6 +253,30 @@ public:
             this->declare_parameter<double>("long_range_clearance_alignment_deg", 45.0)),
         long_range_clearance_start_bias_(
             this->declare_parameter<double>("long_range_clearance_start_bias", 0.35)),
+        narrow_gap_target_enabled_(this->declare_parameter<bool>("narrow_gap_target_enabled", true)),
+        narrow_gap_bonus_weight_(this->declare_parameter<double>("narrow_gap_bonus_weight", 0.85)),
+        narrow_gap_min_width_m_(this->declare_parameter<double>("narrow_gap_min_width_m", 0.23)),
+        narrow_gap_max_width_m_(this->declare_parameter<double>("narrow_gap_max_width_m", 0.46)),
+        narrow_gap_search_deg_(this->declare_parameter<double>("narrow_gap_search_deg", 100.0)),
+        narrow_gap_sector_half_width_deg_(
+            this->declare_parameter<double>("narrow_gap_sector_half_width_deg", 10.0)),
+        narrow_gap_boundary_search_deg_(
+            this->declare_parameter<double>("narrow_gap_boundary_search_deg", 45.0)),
+        narrow_gap_boundary_obstacle_max_range_m_(this->declare_parameter<double>(
+            "narrow_gap_boundary_obstacle_max_range_m", 1.25)),
+        narrow_gap_boundary_drop_m_(
+            this->declare_parameter<double>("narrow_gap_boundary_drop_m", 0.05)),
+        narrow_gap_min_center_distance_m_(
+            this->declare_parameter<double>("narrow_gap_min_center_distance_m", 0.30)),
+        narrow_gap_min_sector_distance_m_(
+            this->declare_parameter<double>("narrow_gap_min_sector_distance_m", 0.08)),
+        narrow_gap_min_depth_gain_m_(
+            this->declare_parameter<double>("narrow_gap_min_depth_gain_m", 0.05)),
+        narrow_gap_alignment_deg_(this->declare_parameter<double>("narrow_gap_alignment_deg", 35.0)),
+        narrow_gap_hold_seconds_(this->declare_parameter<double>("narrow_gap_hold_seconds", 1.0)),
+        narrow_gap_hold_max_angle_error_deg_(
+            this->declare_parameter<double>("narrow_gap_hold_max_angle_error_deg", 25.0)),
+        narrow_gap_speed_m_s_(this->declare_parameter<double>("narrow_gap_speed_m_s", 0.055)),
         narrow_corridor_enabled_(this->declare_parameter<bool>("narrow_corridor_enabled", true)),
         narrow_corridor_width_m_(this->declare_parameter<double>("narrow_corridor_width_m", 0.62)),
         narrow_corridor_side_detect_m_(
@@ -387,6 +434,7 @@ private:
         reverse_condition_active_ = false;
         reverse_recovery_active_ = false;
         blocked_recovery_candidate_active_ = false;
+        held_narrow_gap_target_ = NarrowGapTarget();
         reset_recovery_state();
 
         if (reset_heading_on_start_ || !heading_reference_valid_)
@@ -413,6 +461,7 @@ private:
         stuck_candidate_active_ = false;
         stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
         recovery_source_ = RecoverySource::NONE;
+        held_narrow_gap_target_ = NarrowGapTarget();
         obstacle_memory_.clear();
         reset_recovery_state();
         publish_stop = true;
@@ -663,6 +712,7 @@ private:
     output.costmap.obstacle_points = obstacle_memory_size();
     output.costmap.narrow_corridor = detect_narrow_corridor(output.costmap);
     output.costmap.long_range_target = compute_long_range_target(scan, safety);
+    output.costmap.narrow_gap_target = compute_narrow_gap_target(scan);
 
     if (output.costmap.front_m <= emergency_stop_distance_m_)
     {
@@ -683,7 +733,12 @@ private:
     }
 
     reset_recovery_state();
-    if (output.costmap.narrow_corridor)
+    if (output.costmap.narrow_gap_target.valid)
+    {
+      output.mode = "NARROW_GAP_COSTMAP_DRIVE";
+      output.detail = "width-valid gate target, speed limited";
+    }
+    else if (output.costmap.narrow_corridor)
     {
       output.mode = "NARROW_COSTMAP_DRIVE";
       output.detail = "inflated corridor is passable, speed limited";
@@ -711,7 +766,15 @@ private:
             std::max(0.01, front_slow_distance_m_ - front_stop_distance_m_),
         0.0,
         1.0);
-    const double speed_cap = output.costmap.narrow_corridor ? std::max(min_linear_speed_, narrow_corridor_speed_m_s_) : max_linear_speed_;
+    double speed_cap = max_linear_speed_;
+    if (output.costmap.narrow_corridor)
+    {
+      speed_cap = std::min(speed_cap, std::max(min_linear_speed_, narrow_corridor_speed_m_s_));
+    }
+    if (output.costmap.narrow_gap_target.valid)
+    {
+      speed_cap = std::min(speed_cap, std::max(min_linear_speed_, narrow_gap_speed_m_s_));
+    }
     const double base_linear =
         min_linear_speed_ + (speed_cap - min_linear_speed_) * front_ratio;
 
@@ -741,6 +804,7 @@ private:
               costmap,
               safety,
               output.costmap.long_range_target,
+              output.costmap.narrow_gap_target,
               linear_x,
               angular_z,
               score,
@@ -784,6 +848,7 @@ private:
       const LocalCostmap &costmap,
       const SafetySnapshot &safety,
       const LongRangeTarget &long_range_target,
+      const NarrowGapTarget &narrow_gap_target,
       double linear_x,
       double angular_z,
       double &score,
@@ -851,6 +916,30 @@ private:
       long_range_reward =
           long_range_clearance_weight_ * clearance_ratio * target_alignment;
     }
+    double narrow_gap_reward = 0.0;
+    if (narrow_gap_target.valid && narrow_gap_bonus_weight_ > 0.0)
+    {
+      const double alignment_width = deg_to_rad(std::max(1.0, narrow_gap_alignment_deg_));
+      const double target_error =
+          std::fabs(normalize_angle_rad(pose.yaw - narrow_gap_target.angle_rad));
+      const double target_alignment =
+          1.0 - clamp_value(target_error / alignment_width, 0.0, 1.0);
+      const double width_span =
+          std::max(0.01, narrow_gap_max_width_m_ - narrow_gap_min_width_m_);
+      const double width_ratio =
+          clamp_value((narrow_gap_target.width_m - narrow_gap_min_width_m_) / width_span, 0.0, 1.0);
+      const double depth_ratio = clamp_value(
+          (narrow_gap_target.center_range_m - narrow_gap_min_center_distance_m_) /
+              std::max(0.01, scan_obstacle_max_range_m_ - narrow_gap_min_center_distance_m_),
+          0.0,
+          1.0);
+      const double held_multiplier = narrow_gap_target.held ? 1.10 : 1.0;
+      narrow_gap_reward =
+          narrow_gap_bonus_weight_ *
+          (0.65 + 0.20 * depth_ratio + 0.15 * width_ratio) *
+          target_alignment *
+          held_multiplier;
+    }
 
     score =
         progress_reward_weight_ * pose.x -
@@ -860,7 +949,8 @@ private:
         cost_smooth_weight_ * smooth_ratio -
         cost_lateral_weight_ * std::fabs(pose.y) -
         heading_alignment_weight_ * heading_ratio +
-        long_range_reward;
+        long_range_reward +
+        narrow_gap_reward;
 
     (void)max_cost;
     return true;
@@ -1035,6 +1125,200 @@ private:
     }
 
     return target;
+  }
+
+  NarrowGapTarget compute_narrow_gap_target(const sensor_msgs::msg::LaserScan &scan)
+  {
+    NarrowGapTarget best_target;
+    NarrowGapTarget held_candidate;
+    if (!narrow_gap_target_enabled_ || scan.ranges.empty() ||
+        std::fabs(scan.angle_increment) < 1e-9)
+    {
+      held_narrow_gap_target_ = NarrowGapTarget();
+      return best_target;
+    }
+
+    const rclcpp::Time now = this->now();
+    const bool held_active =
+        held_narrow_gap_target_.valid &&
+        narrow_gap_hold_seconds_ > 0.0 &&
+        (now - held_narrow_gap_target_updated_at_).seconds() <= narrow_gap_hold_seconds_;
+    const double held_angle_limit =
+        deg_to_rad(std::max(1.0, narrow_gap_hold_max_angle_error_deg_));
+    const double search_limit = std::max(1.0, narrow_gap_search_deg_);
+    const double step_deg = std::max(1.0, scan_sample_step_deg_);
+    const double max_center_range =
+        std::max(narrow_gap_min_center_distance_m_ + 0.01, scan_obstacle_max_range_m_);
+
+    for (double angle_deg = -search_limit; angle_deg <= search_limit; angle_deg += step_deg)
+    {
+      double center_range = 0.0;
+      if (!range_at_angle(scan, deg_to_rad(angle_deg), center_range) ||
+          !range_is_usable(scan, center_range))
+      {
+        continue;
+      }
+
+      const double sector_clearance =
+          min_range_in_sector(scan, angle_deg, narrow_gap_sector_half_width_deg_);
+      const GapWidthMeasurement width_measurement =
+          measure_narrow_gap_width(scan, angle_deg, center_range);
+      if (!narrow_gap_allows(angle_deg, center_range, sector_clearance, width_measurement))
+      {
+        continue;
+      }
+
+      NarrowGapTarget candidate;
+      candidate.valid = true;
+      candidate.angle_rad = deg_to_rad(angle_deg);
+      candidate.center_range_m = center_range;
+      candidate.sector_clearance_m = sector_clearance;
+      candidate.width_m = width_measurement.width_m;
+      candidate.width_measurement = width_measurement;
+
+      const double center_ratio = clamp_value(
+          (center_range - narrow_gap_min_center_distance_m_) /
+              (max_center_range - narrow_gap_min_center_distance_m_),
+          0.0,
+          1.0);
+      const double width_ratio = clamp_value(
+          (width_measurement.width_m - narrow_gap_min_width_m_) /
+              std::max(0.01, narrow_gap_max_width_m_ - narrow_gap_min_width_m_),
+          0.0,
+          1.0);
+      const double forward_ratio =
+          1.0 - clamp_value(std::fabs(angle_deg) / search_limit, 0.0, 1.0);
+      candidate.score = center_ratio + 0.25 * width_ratio + 0.35 * forward_ratio;
+
+      if (!best_target.valid || candidate.score > best_target.score)
+      {
+        best_target = candidate;
+      }
+
+      if (held_active &&
+          std::fabs(normalize_angle_rad(candidate.angle_rad - held_narrow_gap_target_.angle_rad)) <=
+              held_angle_limit &&
+          (!held_candidate.valid || candidate.score > held_candidate.score))
+      {
+        held_candidate = candidate;
+        held_candidate.held = true;
+      }
+    }
+
+    NarrowGapTarget target = held_candidate.valid ? held_candidate : best_target;
+    if (target.valid)
+    {
+      held_narrow_gap_target_ = target;
+      held_narrow_gap_target_updated_at_ = now;
+    }
+    else if (!held_active)
+    {
+      held_narrow_gap_target_ = NarrowGapTarget();
+    }
+
+    return target;
+  }
+
+  GapWidthMeasurement measure_narrow_gap_width(
+      const sensor_msgs::msg::LaserScan &scan,
+      double center_deg,
+      double center_range_m) const
+  {
+    GapWidthMeasurement measurement;
+    const bool has_left = find_narrow_gap_boundary(
+        scan,
+        center_deg,
+        center_range_m,
+        1.0,
+        measurement.left_angle_rad,
+        measurement.left_range_m);
+    const bool has_right = find_narrow_gap_boundary(
+        scan,
+        center_deg,
+        center_range_m,
+        -1.0,
+        measurement.right_angle_rad,
+        measurement.right_range_m);
+
+    if (!has_left || !has_right)
+    {
+      return measurement;
+    }
+
+    const double angle_between =
+        std::fabs(normalize_angle_rad(measurement.left_angle_rad - measurement.right_angle_rad));
+    const double width_squared =
+        measurement.left_range_m * measurement.left_range_m +
+        measurement.right_range_m * measurement.right_range_m -
+        2.0 * measurement.left_range_m * measurement.right_range_m * std::cos(angle_between);
+
+    measurement.width_m = std::sqrt(std::max(0.0, width_squared));
+    measurement.measured = true;
+    return measurement;
+  }
+
+  bool narrow_gap_allows(
+      double center_deg,
+      double center_range_m,
+      double sector_clearance_m,
+      const GapWidthMeasurement &measurement) const
+  {
+    if (!measurement.measured)
+    {
+      return false;
+    }
+    if (std::fabs(center_deg) > narrow_gap_search_deg_)
+    {
+      return false;
+    }
+    if (measurement.width_m < narrow_gap_min_width_m_ ||
+        measurement.width_m > narrow_gap_max_width_m_)
+    {
+      return false;
+    }
+    if (center_range_m < narrow_gap_min_center_distance_m_ ||
+        sector_clearance_m < narrow_gap_min_sector_distance_m_)
+    {
+      return false;
+    }
+
+    const double side_mean_range =
+        0.5 * (measurement.left_range_m + measurement.right_range_m);
+    return center_range_m >= side_mean_range + narrow_gap_min_depth_gain_m_;
+  }
+
+  bool find_narrow_gap_boundary(
+      const sensor_msgs::msg::LaserScan &scan,
+      double center_deg,
+      double center_range_m,
+      double direction,
+      double &boundary_angle_rad,
+      double &boundary_range_m) const
+  {
+    const double step_deg = std::max(1.0, scan_sample_step_deg_);
+    const double max_offset = std::max(step_deg, narrow_gap_boundary_search_deg_);
+    for (double offset_deg = step_deg; offset_deg <= max_offset; offset_deg += step_deg)
+    {
+      const double angle_deg = center_deg + sign_value(direction) * offset_deg;
+      double range = 0.0;
+      if (!range_at_angle(scan, deg_to_rad(angle_deg), range) ||
+          !range_is_usable(scan, range))
+      {
+        continue;
+      }
+
+      const bool close_enough = range <= narrow_gap_boundary_obstacle_max_range_m_;
+      const bool shallower_than_center =
+          range <= center_range_m - std::max(0.0, narrow_gap_boundary_drop_m_);
+      if (close_enough && shallower_than_center)
+      {
+        boundary_angle_rad = deg_to_rad(angle_deg);
+        boundary_range_m = range;
+        return true;
+      }
+    }
+
+    return false;
   }
 
   void integrate_scan_if_new(
@@ -1534,6 +1818,7 @@ private:
     blocked_recovery_candidate_active_ = false;
     stuck_recovery_phase_ = StuckRecoveryPhase::IDLE;
     recovery_source_ = RecoverySource::NONE;
+    held_narrow_gap_target_ = NarrowGapTarget();
   }
 
   SafetySnapshot get_safety_snapshot()
@@ -1967,6 +2252,94 @@ private:
       array.markers.push_back(delete_target_marker);
     }
 
+    if (output.costmap.narrow_gap_target.valid)
+    {
+      visualization_msgs::msg::Marker gate_marker;
+      gate_marker.header.stamp = this->now();
+      gate_marker.header.frame_id = costmap_frame_id_;
+      gate_marker.ns = "narrow_gap_target";
+      gate_marker.id = 3;
+      gate_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+      gate_marker.action = visualization_msgs::msg::Marker::ADD;
+      gate_marker.scale.x = 0.04;
+      gate_marker.color.r = 1.0f;
+      gate_marker.color.g = 0.62f;
+      gate_marker.color.b = 0.0f;
+      gate_marker.color.a = 0.95f;
+      gate_marker.lifetime.sec = 0;
+      gate_marker.lifetime.nanosec = 500000000;
+      gate_marker.pose.orientation.w = 1.0;
+
+      geometry_msgs::msg::Point origin;
+      origin.x = 0.0;
+      origin.y = 0.0;
+      origin.z = 0.14;
+      gate_marker.points.push_back(origin);
+
+      geometry_msgs::msg::Point target;
+      target.x = output.costmap.narrow_gap_target.center_range_m *
+                 std::cos(output.costmap.narrow_gap_target.angle_rad);
+      target.y = output.costmap.narrow_gap_target.center_range_m *
+                 std::sin(output.costmap.narrow_gap_target.angle_rad);
+      target.z = 0.14;
+      gate_marker.points.push_back(target);
+      array.markers.push_back(gate_marker);
+
+      if (output.costmap.narrow_gap_target.width_measurement.measured)
+      {
+        visualization_msgs::msg::Marker width_marker;
+        width_marker.header.stamp = this->now();
+        width_marker.header.frame_id = costmap_frame_id_;
+        width_marker.ns = "narrow_gap_width";
+        width_marker.id = 4;
+        width_marker.type = visualization_msgs::msg::Marker::LINE_STRIP;
+        width_marker.action = visualization_msgs::msg::Marker::ADD;
+        width_marker.scale.x = 0.025;
+        width_marker.color.r = 1.0f;
+        width_marker.color.g = 0.95f;
+        width_marker.color.b = 0.0f;
+        width_marker.color.a = 0.9f;
+        width_marker.lifetime.sec = 0;
+        width_marker.lifetime.nanosec = 500000000;
+        width_marker.pose.orientation.w = 1.0;
+
+        geometry_msgs::msg::Point left;
+        left.x = output.costmap.narrow_gap_target.width_measurement.left_range_m *
+                 std::cos(output.costmap.narrow_gap_target.width_measurement.left_angle_rad);
+        left.y = output.costmap.narrow_gap_target.width_measurement.left_range_m *
+                 std::sin(output.costmap.narrow_gap_target.width_measurement.left_angle_rad);
+        left.z = 0.145;
+        width_marker.points.push_back(left);
+
+        geometry_msgs::msg::Point right;
+        right.x = output.costmap.narrow_gap_target.width_measurement.right_range_m *
+                  std::cos(output.costmap.narrow_gap_target.width_measurement.right_angle_rad);
+        right.y = output.costmap.narrow_gap_target.width_measurement.right_range_m *
+                  std::sin(output.costmap.narrow_gap_target.width_measurement.right_angle_rad);
+        right.z = 0.145;
+        width_marker.points.push_back(right);
+        array.markers.push_back(width_marker);
+      }
+    }
+    else
+    {
+      visualization_msgs::msg::Marker delete_gate_marker;
+      delete_gate_marker.header.stamp = this->now();
+      delete_gate_marker.header.frame_id = costmap_frame_id_;
+      delete_gate_marker.ns = "narrow_gap_target";
+      delete_gate_marker.id = 3;
+      delete_gate_marker.action = visualization_msgs::msg::Marker::DELETE;
+      array.markers.push_back(delete_gate_marker);
+
+      visualization_msgs::msg::Marker delete_width_marker;
+      delete_width_marker.header.stamp = this->now();
+      delete_width_marker.header.frame_id = costmap_frame_id_;
+      delete_width_marker.ns = "narrow_gap_width";
+      delete_width_marker.id = 4;
+      delete_width_marker.action = visualization_msgs::msg::Marker::DELETE;
+      array.markers.push_back(delete_width_marker);
+    }
+
     trajectory_marker_publisher_->publish(array);
   }
 
@@ -2024,6 +2397,7 @@ private:
         "[%s] enabled=%s imu=%s odom=%s ref=%s tilt=%.1fdeg gyro_yaw=%.1fdeg "
         "front=%.2fm left=%.2fm right=%.2fm narrow=%s obs=%d traj=%d/%d "
         "score=%.2f avg_cost=%.1f unknown=%.2f long=%s %.0fdeg/%.2fm "
+        "gate=%s%s %.0fdeg/%.0fmm/%.2fm "
         "target_w=%.2f cmd=(%.2f, %.2f) %s",
         output.mode.c_str(),
         output.enabled_requested ? "yes" : "no",
@@ -2048,6 +2422,17 @@ private:
             : 0.0,
         output.costmap.long_range_target.valid
             ? output.costmap.long_range_target.distance_m
+            : 0.0,
+        output.costmap.narrow_gap_target.valid ? "yes" : "no",
+        output.costmap.narrow_gap_target.held ? "*" : "",
+        output.costmap.narrow_gap_target.valid
+            ? rad_to_deg(output.costmap.narrow_gap_target.angle_rad)
+            : 0.0,
+        output.costmap.narrow_gap_target.valid
+            ? output.costmap.narrow_gap_target.width_m * 1000.0
+            : 0.0,
+        output.costmap.narrow_gap_target.valid
+            ? output.costmap.narrow_gap_target.center_range_m
             : 0.0,
         output.costmap.best_angular_z,
         output.linear_x,
@@ -2115,6 +2500,22 @@ private:
   const double long_range_clearance_window_deg_;
   const double long_range_clearance_alignment_deg_;
   const double long_range_clearance_start_bias_;
+  const bool narrow_gap_target_enabled_;
+  const double narrow_gap_bonus_weight_;
+  const double narrow_gap_min_width_m_;
+  const double narrow_gap_max_width_m_;
+  const double narrow_gap_search_deg_;
+  const double narrow_gap_sector_half_width_deg_;
+  const double narrow_gap_boundary_search_deg_;
+  const double narrow_gap_boundary_obstacle_max_range_m_;
+  const double narrow_gap_boundary_drop_m_;
+  const double narrow_gap_min_center_distance_m_;
+  const double narrow_gap_min_sector_distance_m_;
+  const double narrow_gap_min_depth_gain_m_;
+  const double narrow_gap_alignment_deg_;
+  const double narrow_gap_hold_seconds_;
+  const double narrow_gap_hold_max_angle_error_deg_;
+  const double narrow_gap_speed_m_s_;
   const bool narrow_corridor_enabled_;
   const double narrow_corridor_width_m_;
   const double narrow_corridor_side_detect_m_;
@@ -2193,6 +2594,9 @@ private:
   int stuck_turn_direction_ = 1;
   bool stuck_recovery_finished_once_ = false;
   rclcpp::Time last_stuck_recovery_finished_at_;
+
+  NarrowGapTarget held_narrow_gap_target_;
+  rclcpp::Time held_narrow_gap_target_updated_at_;
 
   double last_command_angular_z_ = 0.0;
 
