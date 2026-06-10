@@ -724,9 +724,10 @@ private:
     output.costmap.right_m = min_range_in_sector(scan, -side_angle_deg_, side_window_deg_);
     output.costmap.obstacle_points = obstacle_memory_size();
     output.costmap.narrow_corridor = detect_narrow_corridor(output.costmap);
-    output.costmap.long_range_target = compute_long_range_target(scan, safety);
     output.costmap.narrow_gap_target = compute_narrow_gap_target(scan);
     output.costmap.rejected_gap_sectors = compute_rejected_gap_sectors(scan);
+    output.costmap.long_range_target =
+        compute_long_range_target(scan, safety, output.costmap.rejected_gap_sectors);
 
     if (output.costmap.front_m <= emergency_stop_distance_m_)
     {
@@ -1149,7 +1150,8 @@ private:
 
   LongRangeTarget compute_long_range_target(
       const sensor_msgs::msg::LaserScan &scan,
-      const SafetySnapshot &safety) const
+      const SafetySnapshot &safety,
+      const std::vector<RejectedGapSector> &rejected_gap_sectors) const
   {
     LongRangeTarget target;
     if (!long_range_clearance_enabled_ || scan.ranges.empty() ||
@@ -1188,16 +1190,28 @@ private:
       {
         continue;
       }
+      if (angle_points_to_rejected_gap(angle, rejected_gap_sectors))
+      {
+        continue;
+      }
 
       double window_min = max_distance;
       bool sampled = false;
+      bool overlaps_rejected_gap = false;
       for (double offset_deg = -window_half_width;
            offset_deg <= window_half_width + 1e-6;
            offset_deg += step_deg)
       {
+        const double sample_angle = angle + deg_to_rad(offset_deg);
+        if (angle_points_to_rejected_gap(sample_angle, rejected_gap_sectors))
+        {
+          overlaps_rejected_gap = true;
+          break;
+        }
+
         double range = 0.0;
         double clearance = 0.0;
-        if (!range_at_angle(scan, angle + deg_to_rad(offset_deg), range) ||
+        if (!range_at_angle(scan, sample_angle, range) ||
             !range_to_long_range_clearance(scan, range, clearance))
         {
           continue;
@@ -1206,7 +1220,7 @@ private:
         window_min = std::min(window_min, clearance);
       }
 
-      if (!sampled || window_min < min_distance)
+      if (overlaps_rejected_gap || !sampled || window_min < min_distance)
       {
         continue;
       }
@@ -1227,6 +1241,31 @@ private:
     }
 
     return target;
+  }
+
+  bool angle_points_to_rejected_gap(
+      double angle_rad,
+      const std::vector<RejectedGapSector> &rejected_gap_sectors) const
+  {
+    for (const auto &sector : rejected_gap_sectors)
+    {
+      const double missing_width =
+          std::max(0.0, narrow_gap_min_width_m_ - sector.width_m);
+      const double range_for_margin =
+          std::max(0.05, sector.center_range_m);
+      const double width_margin =
+          std::atan2(0.5 * missing_width, range_for_margin);
+      const double angle_margin = std::min(
+          deg_to_rad(std::max(5.0, narrow_gap_alignment_deg_)),
+          sector.half_width_rad + width_margin + deg_to_rad(std::max(1.0, scan_sample_step_deg_)));
+
+      if (std::fabs(normalize_angle_rad(angle_rad - sector.angle_rad)) <= angle_margin)
+      {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   NarrowGapTarget compute_narrow_gap_target(const sensor_msgs::msg::LaserScan &scan)

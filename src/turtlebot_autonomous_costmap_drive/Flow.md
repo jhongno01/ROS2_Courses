@@ -111,7 +111,7 @@ flowchart TD
 - start heading에 가까우면서 멀리 열린 ray 방향과 후보 최종 heading이 가까울 때 주는 long-range clearance 보상. 단, 전방이 가까워질수록 front clearance ratio만큼 약해짐
 - 코사인법칙으로 폭이 검증된 narrow gap 중심과 후보 최종 heading이 가까울 때 주는 gate 보상
 
-Long-range target은 sanitize된 현재 scan에서 `long_range_clearance_search_deg` 범위 안을 훑어 찾습니다. 단일 ray만 믿지 않고 `long_range_clearance_window_deg` 반각 안의 최소 거리를 함께 보며, 후보 궤적의 최종 heading이 이 target에 가까우면 `long_range_clearance_weight`만큼 보상을 받습니다. 다만 전방 장애물이 가까우면 이 보상과 start heading 유지 감점이 front clearance ratio만큼 줄어 C/U자 구조에서 local escape가 우선됩니다. RViz에서는 초록색 `long_range_target` 선으로 표시됩니다.
+Long-range target은 sanitize된 현재 scan에서 `long_range_clearance_search_deg` 범위 안을 훑어 찾습니다. 단일 ray만 믿지 않고 `long_range_clearance_window_deg` 반각 안의 최소 거리를 함께 보며, 후보 궤적의 최종 heading이 이 target에 가까우면 `long_range_clearance_weight`만큼 보상을 받습니다. 폭 부족으로 hard reject된 small gap sector와 겹치는 각도는 long-range 후보에서도 제외해, 통과 불가능 gap 안쪽의 긴 ray가 보상으로 살아남지 않게 합니다. 다만 전방 장애물이 가까우면 이 보상과 start heading 유지 감점이 front clearance ratio만큼 줄어 C/U자 구조에서 local escape가 우선됩니다. RViz에서는 초록색 `long_range_target` 선으로 표시됩니다.
 
 Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 좌우 boundary 중 더 먼 쪽보다 `narrow_gap_min_depth_gain_m` 이상 깊으면 gate로 인정합니다. 반대로 boundary 폭이 `narrow_gap_min_width_m`보다 작으면 passable target이 아니라 rejected gap sector가 되어 일반 trajectory도 그쪽으로 가지 못합니다. 같은 gate가 비슷한 각도에 계속 보이면 `narrow_gap_hold_seconds` 동안 hysteresis를 적용해 S자/방 구조에서 target이 매 프레임 튀는 것을 줄입니다.
 
