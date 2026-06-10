@@ -1282,9 +1282,9 @@ private:
       return false;
     }
 
-    const double side_mean_range =
-        0.5 * (measurement.left_range_m + measurement.right_range_m);
-    return center_range_m >= side_mean_range + narrow_gap_min_depth_gain_m_;
+    const double farther_boundary_range =
+        std::max(measurement.left_range_m, measurement.right_range_m);
+    return center_range_m >= farther_boundary_range + narrow_gap_min_depth_gain_m_;
   }
 
   bool find_narrow_gap_boundary(

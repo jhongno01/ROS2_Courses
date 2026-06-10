@@ -110,7 +110,7 @@ flowchart TD
 
 Long-range target은 sanitize된 현재 scan에서 `long_range_clearance_search_deg` 범위 안을 훑어 찾습니다. 단일 ray만 믿지 않고 `long_range_clearance_window_deg` 반각 안의 최소 거리를 함께 보며, 후보 궤적의 최종 heading이 이 target에 가까우면 `long_range_clearance_weight`만큼 보상을 받습니다. RViz에서는 초록색 `long_range_target` 선으로 표시됩니다.
 
-Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 양쪽 boundary보다 충분히 깊으면 gate로 인정합니다. 같은 gate가 비슷한 각도에 계속 보이면 `narrow_gap_hold_seconds` 동안 hysteresis를 적용해 S자/방 구조에서 target이 매 프레임 튀는 것을 줄입니다.
+Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 좌우 boundary 중 더 먼 쪽보다 `narrow_gap_min_depth_gain_m` 이상 깊으면 gate로 인정합니다. 이 조건이 V자 코너를 좁은 출구로 오인하는 것을 줄입니다. 같은 gate가 비슷한 각도에 계속 보이면 `narrow_gap_hold_seconds` 동안 hysteresis를 적용해 S자/방 구조에서 target이 매 프레임 튀는 것을 줄입니다.
 
 ## 주행 모드
 
@@ -144,7 +144,7 @@ Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고
 ## RViz와 로그 확인 포인트
 
 - `/costmap_drive/local_costmap`: local occupancy grid입니다. 회색/검은 장애물과 inflation이 너무 커서 좁은 통로를 막으면 `inflation_radius_m` 또는 `robot_radius_m`을 낮춥니다.
-- `/costmap_drive/trajectory_markers`: 파란색은 최종 선택된 궤적, 초록색은 long-range target, 주황색은 narrow gap target, 노란색은 계산된 gate 폭입니다. 궤적이 벽 쪽으로 붙으면 `cost_obstacle_weight`, `cost_lateral_weight`, `cost_turn_weight`를 조정합니다. 초록색 target이 옆방으로 자주 튀면 `long_range_clearance_search_deg` 또는 `long_range_clearance_weight`를 낮춥니다. 주황색 target이 문틈을 놓치면 `narrow_gap_min_width_m`, `narrow_gap_boundary_obstacle_max_range_m`, `narrow_gap_bonus_weight`를 확인합니다.
+- `/costmap_drive/trajectory_markers`: 파란색은 최종 선택된 궤적, 초록색은 long-range target, 주황색은 narrow gap target, 노란색은 계산된 gate 폭입니다. 궤적이 벽 쪽으로 붙으면 `cost_obstacle_weight`, `cost_lateral_weight`, `cost_turn_weight`를 조정합니다. 초록색 target이 옆방으로 자주 튀면 `long_range_clearance_search_deg` 또는 `long_range_clearance_weight`를 낮춥니다. 주황색 target이 V자 코너에 자주 뜨면 `narrow_gap_min_depth_gain_m`을 올리고, 실제 문틈을 놓치면 `narrow_gap_min_width_m`, `narrow_gap_boundary_obstacle_max_range_m`, `narrow_gap_bonus_weight`를 확인합니다.
 - 터미널 로그의 `traj=evaluated/rejected`: RViz marker가 아니라 `report_timer_callback`에서 찍는 숫자입니다. 후보 대부분이 reject되면 costmap이 너무 보수적이거나 grid 범위가 너무 좁은 상태입니다.
 
 즉 RViz에서는 map, 최종 선택 궤적, long-range target, narrow gap target을 보고, 후보 개수와 reject 개수는 노드 로그에서 확인합니다. 현재 코드는 모든 후보 궤적을 RViz로 그리지 않고, 최종 선택된 궤적과 target marker만 `/costmap_drive/trajectory_markers`로 발행합니다.

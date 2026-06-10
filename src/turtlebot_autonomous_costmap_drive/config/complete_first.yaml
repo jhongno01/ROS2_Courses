@@ -68,7 +68,7 @@ turtlebot_autonomous_costmap_drive:
     long_range_clearance_start_bias: 0.8
 
     narrow_gap_target_enabled: true
-    narrow_gap_bonus_weight: 0.85
+    narrow_gap_bonus_weight: 0.60
     narrow_gap_min_width_m: 0.23
     narrow_gap_max_width_m: 0.46
     narrow_gap_search_deg: 100.0
@@ -78,7 +78,7 @@ turtlebot_autonomous_costmap_drive:
     narrow_gap_boundary_drop_m: 0.05
     narrow_gap_min_center_distance_m: 0.30
     narrow_gap_min_sector_distance_m: 0.08
-    narrow_gap_min_depth_gain_m: 0.05
+    narrow_gap_min_depth_gain_m: 0.18
     narrow_gap_alignment_deg: 35.0
     narrow_gap_hold_seconds: 1.0
     narrow_gap_hold_max_angle_error_deg: 25.0

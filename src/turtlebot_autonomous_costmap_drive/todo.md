@@ -6,6 +6,7 @@
 - Local costmap 기반 trajectory score에 `long_range_target` 보상 추가.
 - `BLOCKED_TURN`/`EMERGENCY_TURN` 장기 지속 시 `BLOCKED_BACKUP -> BLOCKED_ESCAPE_TURN` 복구 추가.
 - Gap-drive의 코사인법칙 gap width 측정을 costmap 쪽 `narrow_gap_target`으로 이식.
+- V자 코너 오인 방지를 위해 gate 중심 ray가 좌우 boundary 중 더 먼 쪽보다 충분히 깊을 때만 gate로 인정하도록 조정.
 - RViz marker:
   - 파란색: 최종 선택 trajectory
   - 초록색: long-range target
@@ -17,6 +18,7 @@
 - S자/방 구조에서 로그의 `gate=yes`가 실제 지나가야 할 틈에서 뜨는지 확인.
 - `gate=yes*`가 너무 오래 붙으면 `narrow_gap_hold_seconds` 또는 `narrow_gap_hold_max_angle_error_deg` 낮추기.
 - gate가 안 잡히면 `narrow_gap_boundary_obstacle_max_range_m` 올리거나 `narrow_gap_min_width_m` 낮추기.
+- V자 코너를 gate로 오인하면 `narrow_gap_min_depth_gain_m`을 `0.20~0.30`으로 올려보기.
 - 넓은 방 입구를 gate로 오인하면 `narrow_gap_max_width_m` 낮추기.
 - 좁은 틈에서 후보가 살아 있는데도 안 들어가면 `narrow_gap_bonus_weight` 올리고 `cost_lateral_weight`, `heading_alignment_weight`를 조금 낮춰보기.
 
