@@ -189,7 +189,7 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 ### Narrow gap/gate target 보상
 
 - `narrow_gap_target_enabled`: gap-drive의 좁은 통로 폭 측정 기능을 costmap 점수에 섞을지 정합니다.
-- `narrow_gap_bonus_weight`: 후보 최종 heading이 검증된 narrow gap 중심과 가까울 때 주는 보상입니다.
+- `narrow_gap_bonus_weight`: 후보 최종 heading이 검증된 narrow gap 중심과 가까울 때 주는 보상입니다. 조향 중심은 후보 ray 자체가 아니라 코사인법칙으로 찾은 좌우 boundary 좌표의 midpoint 각도입니다.
 - `narrow_gap_min_width_m`: 코사인법칙으로 계산한 좌우 boundary 폭이 이 값 이상이어야 통과 가능한 좁은 gate로 봅니다. 이 값보다 작은 관측 gap 방향은 일반 costmap 궤적에서도 hard reject됩니다. 현재 `robot_radius_m: 0.105`에서는 `0.23 m` 정도가 시작점입니다.
 - `narrow_gap_max_width_m`: 이 값보다 넓은 opening은 narrow gate가 아니라 일반 열린 공간/방으로 보고 gate target에서 제외합니다.
 - `narrow_gap_search_deg`: 로봇 정면 기준 좌우 몇 도까지 gate 후보를 찾을지 정합니다. S자 구조에서는 long-range search보다 넓게 둘 수 있습니다.
@@ -205,7 +205,7 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 - `narrow_gap_hold_max_angle_error_deg`: hysteresis로 같은 gate라고 볼 최대 각도 차이입니다.
 - `narrow_gap_speed_m_s`: `NARROW_GAP_COSTMAP_DRIVE`에서 사용할 선속도 상한입니다.
 
-RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭, 빨간색 짧은 선은 폭이 부족해서 hard reject된 gap 폭입니다. V자 코너에서도 주황/노랑 marker가 자주 뜨면 `narrow_gap_min_depth_gain_m`을 먼저 올리고, 그래도 gate 보상이 너무 강하면 `narrow_gap_bonus_weight`를 낮춥니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis로 이전 gate를 이어 잡았다는 뜻입니다. `small_gap=1/8`은 통과 불가능 gap sector 1개가 관측됐고, 후보 궤적 8개가 그 방향이라 reject됐다는 뜻입니다. `steer=yes`는 주황/초록 target 방향으로 직접 만든 target-aware steering 명령이 선택됐다는 뜻이고, `pivot=yes`는 선속도 0의 제자리 회전 후보가 최종 선택됐다는 뜻입니다.
+RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭, 빨간색 짧은 선은 폭이 부족해서 hard reject된 gap 폭입니다. 주황색 선의 각도는 노란색 gate 폭의 midpoint를 기준으로 하고, 선 길이는 gap 안쪽 깊이를 보여주기 위해 중심 ray의 깊이를 사용합니다. V자 코너에서도 주황/노랑 marker가 자주 뜨면 `narrow_gap_min_depth_gain_m`을 먼저 올리고, 그래도 gate 보상이 너무 강하면 `narrow_gap_bonus_weight`를 낮춥니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis로 이전 gate를 이어 잡았다는 뜻입니다. `small_gap=1/8`은 통과 불가능 gap sector 1개가 관측됐고, 후보 궤적 8개가 그 방향이라 reject됐다는 뜻입니다. `steer=yes`는 주황/초록 target 방향으로 직접 만든 target-aware steering 명령이 선택됐다는 뜻이고, `pivot=yes`는 선속도 0의 제자리 회전 후보가 최종 선택됐다는 뜻입니다.
 
 ### 좁은 통로 모드
 

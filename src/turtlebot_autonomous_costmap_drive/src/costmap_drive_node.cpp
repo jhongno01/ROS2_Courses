@@ -129,6 +129,8 @@ struct GapWidthMeasurement
   double right_range_m = 0.0;
   double boundary_width_m = 0.0;
   double width_m = 0.0;
+  double midpoint_angle_rad = 0.0;
+  double midpoint_range_m = 0.0;
 };
 
 struct NarrowGapTarget
@@ -1456,7 +1458,7 @@ private:
 
       NarrowGapTarget candidate;
       candidate.valid = true;
-      candidate.angle_rad = deg_to_rad(angle_deg);
+      candidate.angle_rad = width_measurement.midpoint_angle_rad;
       candidate.center_range_m = center_range;
       candidate.sector_clearance_m = sector_clearance;
       candidate.width_m = width_measurement.width_m;
@@ -1473,7 +1475,10 @@ private:
           0.0,
           1.0);
       const double forward_ratio =
-          1.0 - clamp_value(std::fabs(angle_deg) / search_limit, 0.0, 1.0);
+          1.0 - clamp_value(
+                    std::fabs(rad_to_deg(candidate.angle_rad)) / search_limit,
+                    0.0,
+                    1.0);
       candidate.score = center_ratio + 0.25 * width_ratio + 0.35 * forward_ratio;
 
       if (!best_target.valid || candidate.score > best_target.score)
@@ -1618,6 +1623,15 @@ private:
 
     measurement.boundary_width_m = std::sqrt(std::max(0.0, boundary_width_squared));
     measurement.width_m = measurement.boundary_width_m;
+    const double left_x = measurement.left_range_m * std::cos(measurement.left_angle_rad);
+    const double left_y = measurement.left_range_m * std::sin(measurement.left_angle_rad);
+    const double right_x = measurement.right_range_m * std::cos(measurement.right_angle_rad);
+    const double right_y = measurement.right_range_m * std::sin(measurement.right_angle_rad);
+    const double midpoint_x = 0.5 * (left_x + right_x);
+    const double midpoint_y = 0.5 * (left_y + right_y);
+    measurement.midpoint_angle_rad = std::atan2(midpoint_y, midpoint_x);
+    measurement.midpoint_range_m =
+        std::sqrt(midpoint_x * midpoint_x + midpoint_y * midpoint_y);
     measurement.measured = true;
     return measurement;
   }
