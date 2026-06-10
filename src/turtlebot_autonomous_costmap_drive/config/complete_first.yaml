@@ -27,9 +27,9 @@ turtlebot_autonomous_costmap_drive:
     front_slow_distance_m: 0.50
     side_angle_deg: 75.0
     side_window_deg: 18.0
-    front_window_deg: 18.0
+    front_window_deg: 28.0 # defalut 18
     scan_sample_step_deg: 1.0
-    scan_obstacle_min_range_m: 0.05
+    scan_obstacle_min_range_m: 0.01
     scan_obstacle_max_range_m: 1.8
     raytrace_max_range_m: 1.6
     lost_scan_timeout_seconds: 2.0
@@ -41,7 +41,7 @@ turtlebot_autonomous_costmap_drive:
     obstacle_memory_seconds: 2.0
     obstacle_memory_max_points: 12000
     robot_radius_m: 0.105
-    inflation_radius_m: 0.02
+    inflation_radius_m: 0.03
     lethal_cost_threshold: 75.0
     unknown_cell_cost: 35.0
     allow_unknown_trajectory: true
@@ -49,45 +49,45 @@ turtlebot_autonomous_costmap_drive:
     trajectory_horizon_s: 1.8
     trajectory_dt_s: 0.10
     angular_sample_count: 51
-    turn_slowdown_gain: 0.65
-    progress_reward_weight: 1.4
-    cost_obstacle_weight: 5.5
-    cost_unknown_weight: 0.35
-    cost_turn_weight: 0.30
+    turn_slowdown_gain: 0.50
+    progress_reward_weight: 0.8
+    cost_obstacle_weight: 8.0
+    cost_unknown_weight: 0.45
+    cost_turn_weight: 0.25
     cost_smooth_weight: 0.35
     cost_lateral_weight: 0.9
     heading_alignment_weight: 0.45
 
     long_range_clearance_enabled: true
-    long_range_clearance_weight: 1.00
+    long_range_clearance_weight: 0.80
     long_range_clearance_max_range_m: 3.0
     long_range_clearance_min_range_m: 0.55
     long_range_clearance_search_deg: 50.0
     long_range_clearance_window_deg: 6.0
     long_range_clearance_alignment_deg: 45.0
-    long_range_clearance_start_bias: 0.8
+    long_range_clearance_start_bias: 0.5
 
     narrow_gap_target_enabled: true
-    narrow_gap_bonus_weight: 0.60
+    narrow_gap_bonus_weight: 0.40 # 0.6
     narrow_gap_min_width_m: 0.23
     narrow_gap_max_width_m: 0.46
     narrow_gap_search_deg: 100.0
     narrow_gap_sector_half_width_deg: 10.0
     narrow_gap_boundary_search_deg: 45.0
-    narrow_gap_boundary_obstacle_max_range_m: 1.60
+    narrow_gap_boundary_obstacle_max_range_m: 0.80
     narrow_gap_boundary_drop_m: 0.05
     narrow_gap_min_center_distance_m: 0.30
     narrow_gap_min_sector_distance_m: 0.08
-    narrow_gap_min_depth_gain_m: 0.18
+    narrow_gap_min_depth_gain_m: 0.25
     narrow_gap_alignment_deg: 35.0
     narrow_gap_hold_seconds: 1.0
     narrow_gap_hold_max_angle_error_deg: 25.0
-    narrow_gap_speed_m_s: 0.055
+    narrow_gap_speed_m_s: 0.10
 
     narrow_corridor_enabled: true
     narrow_corridor_width_m: 0.38
     narrow_corridor_side_detect_m: 0.16
-    narrow_corridor_speed_m_s: 0.06
+    narrow_corridor_speed_m_s: 0.12
 
     tilt_stop_deg: 60.0
     imu_timeout_seconds: 1.0
