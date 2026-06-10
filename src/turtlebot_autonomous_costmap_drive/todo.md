@@ -30,4 +30,4 @@
 - 현재 `robot_radius_m: 0.105`, `narrow_gap_min_width_m: 0.23`.
 - 이론상 로봇 지름은 약 210mm, gate 인정 시작은 230mm.
 - 실제 안정 통과 폭은 LiDAR/grid 오차까지 고려해서 250~290mm 정도로 보고 테스트.
-- 100~150mm gap 쪽에는 RViz 빨간 `rejected_gap_sector`가 떠야 하고, 260mm gap 쪽에는 빨간 marker가 뜨지 않아야 합니다.
+- 100~150mm gap 쪽에는 RViz 빨간 `rejected_gap_sector` 폭 marker가 떠야 하고, 260mm gap 쪽에는 빨간 marker가 뜨지 않아야 합니다.

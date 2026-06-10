@@ -205,7 +205,7 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 - `narrow_gap_hold_max_angle_error_deg`: hysteresis로 같은 gate라고 볼 최대 각도 차이입니다.
 - `narrow_gap_speed_m_s`: `NARROW_GAP_COSTMAP_DRIVE`에서 사용할 선속도 상한입니다.
 
-RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭, 빨간색 선은 폭이 부족해서 hard reject된 gap sector입니다. V자 코너에서도 주황/노랑 marker가 자주 뜨면 `narrow_gap_min_depth_gain_m`을 먼저 올리고, 그래도 gate 보상이 너무 강하면 `narrow_gap_bonus_weight`를 낮춥니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis로 이전 gate를 이어 잡았다는 뜻입니다. `small_gap=1/8`은 통과 불가능 gap sector 1개가 관측됐고, 후보 궤적 8개가 그 방향이라 reject됐다는 뜻입니다.
+RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭, 빨간색 짧은 선은 폭이 부족해서 hard reject된 gap 폭입니다. V자 코너에서도 주황/노랑 marker가 자주 뜨면 `narrow_gap_min_depth_gain_m`을 먼저 올리고, 그래도 gate 보상이 너무 강하면 `narrow_gap_bonus_weight`를 낮춥니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis로 이전 gate를 이어 잡았다는 뜻입니다. `small_gap=1/8`은 통과 불가능 gap sector 1개가 관측됐고, 후보 궤적 8개가 그 방향이라 reject됐다는 뜻입니다.
 
 ### 좁은 통로 모드
 

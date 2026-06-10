@@ -150,6 +150,7 @@ struct RejectedGapSector
   double half_width_rad = 0.0;
   double center_range_m = 0.0;
   double width_m = 0.0;
+  GapWidthMeasurement width_measurement;
 };
 
 struct CostmapSummary
@@ -1306,6 +1307,7 @@ private:
     double run_end_deg = 0.0;
     double run_min_width_m = std::numeric_limits<double>::infinity();
     double run_max_center_range_m = 0.0;
+    GapWidthMeasurement run_width_measurement;
 
     const auto flush_run = [&]() {
       if (!run_active)
@@ -1319,11 +1321,13 @@ private:
           deg_to_rad(std::max(step_deg, 0.5 * (run_end_deg - run_start_deg) + step_deg));
       sector.center_range_m = run_max_center_range_m;
       sector.width_m = std::isfinite(run_min_width_m) ? run_min_width_m : 0.0;
+      sector.width_measurement = run_width_measurement;
       sectors.push_back(sector);
 
       run_active = false;
       run_min_width_m = std::numeric_limits<double>::infinity();
       run_max_center_range_m = 0.0;
+      run_width_measurement = GapWidthMeasurement();
     };
 
     for (double angle_deg = -search_limit; angle_deg <= search_limit; angle_deg += step_deg)
@@ -1352,7 +1356,11 @@ private:
         run_start_deg = angle_deg;
       }
       run_end_deg = angle_deg;
-      run_min_width_m = std::min(run_min_width_m, width_measurement.width_m);
+      if (width_measurement.width_m < run_min_width_m)
+      {
+        run_min_width_m = width_measurement.width_m;
+        run_width_measurement = width_measurement;
+      }
       run_max_center_range_m = std::max(run_max_center_range_m, center_range);
     }
 
@@ -2624,17 +2632,26 @@ private:
 
       for (const auto &sector : output.costmap.rejected_gap_sectors)
       {
-        geometry_msgs::msg::Point origin;
-        origin.x = 0.0;
-        origin.y = 0.0;
-        origin.z = 0.16;
-        rejected_marker.points.push_back(origin);
+        if (!sector.width_measurement.measured)
+        {
+          continue;
+        }
 
-        geometry_msgs::msg::Point target;
-        target.x = sector.center_range_m * std::cos(sector.angle_rad);
-        target.y = sector.center_range_m * std::sin(sector.angle_rad);
-        target.z = 0.16;
-        rejected_marker.points.push_back(target);
+        geometry_msgs::msg::Point left;
+        left.x = sector.width_measurement.left_range_m *
+                 std::cos(sector.width_measurement.left_angle_rad);
+        left.y = sector.width_measurement.left_range_m *
+                 std::sin(sector.width_measurement.left_angle_rad);
+        left.z = 0.16;
+        rejected_marker.points.push_back(left);
+
+        geometry_msgs::msg::Point right;
+        right.x = sector.width_measurement.right_range_m *
+                  std::cos(sector.width_measurement.right_angle_rad);
+        right.y = sector.width_measurement.right_range_m *
+                  std::sin(sector.width_measurement.right_angle_rad);
+        right.z = 0.16;
+        rejected_marker.points.push_back(right);
       }
       array.markers.push_back(rejected_marker);
     }
