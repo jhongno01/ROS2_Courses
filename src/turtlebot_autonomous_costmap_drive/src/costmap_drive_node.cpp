@@ -168,6 +168,7 @@ struct CostmapSummary
   bool has_safe_trajectory = false;
   bool narrow_corridor = false;
   bool selected_pivot_trajectory = false;
+  bool target_steering_trajectory = false;
   LongRangeTarget long_range_target;
   NarrowGapTarget narrow_gap_target;
   std::vector<RejectedGapSector> rejected_gap_sectors;
@@ -751,23 +752,50 @@ private:
     if (output.costmap.narrow_gap_target.valid)
     {
       output.mode = "NARROW_GAP_COSTMAP_DRIVE";
-      output.detail = output.costmap.selected_pivot_trajectory
-                          ? "width-valid gate target, front-close pivot selected"
-                          : "width-valid gate target, speed limited";
+      if (output.costmap.target_steering_trajectory)
+      {
+        output.detail = output.costmap.selected_pivot_trajectory
+                            ? "width-valid gate target, target-aware pivot"
+                            : "width-valid gate target, target-aware steering";
+      }
+      else
+      {
+        output.detail = output.costmap.selected_pivot_trajectory
+                            ? "width-valid gate target, front-close pivot selected"
+                            : "width-valid gate target, speed limited";
+      }
     }
     else if (output.costmap.narrow_corridor)
     {
       output.mode = "NARROW_COSTMAP_DRIVE";
-      output.detail = output.costmap.selected_pivot_trajectory
-                          ? "inflated corridor is passable, front-close pivot selected"
-                          : "inflated corridor is passable, speed limited";
+      if (output.costmap.target_steering_trajectory)
+      {
+        output.detail = output.costmap.selected_pivot_trajectory
+                            ? "target-aware corridor pivot"
+                            : "target-aware corridor steering";
+      }
+      else
+      {
+        output.detail = output.costmap.selected_pivot_trajectory
+                            ? "inflated corridor is passable, front-close pivot selected"
+                            : "inflated corridor is passable, speed limited";
+      }
     }
     else
     {
       output.mode = "COSTMAP_DRIVE";
-      output.detail = output.costmap.selected_pivot_trajectory
-                          ? "front-close pivot candidate selected"
-                          : "selected lowest-cost trajectory";
+      if (output.costmap.target_steering_trajectory)
+      {
+        output.detail = output.costmap.selected_pivot_trajectory
+                            ? "target-aware pivot"
+                            : "target-aware steering";
+      }
+      else
+      {
+        output.detail = output.costmap.selected_pivot_trajectory
+                            ? "front-close pivot candidate selected"
+                            : "selected lowest-cost trajectory";
+      }
     }
     return output;
   }
@@ -801,12 +829,14 @@ private:
 
     bool found = false;
     const double angular_limit = std::max(0.01, max_angular_speed_);
+    const double steering_deadband = deg_to_rad(5.0);
     double best_score = -std::numeric_limits<double>::infinity();
     double best_linear = 0.0;
     double best_angular = 0.0;
     double best_avg_cost = 0.0;
     double best_unknown_ratio = 0.0;
     bool best_is_pivot = false;
+    bool best_is_target_steering = false;
     std::vector<Pose2D> best_path;
 
     auto evaluate_candidate = [&](double linear_x, double angular_z, bool is_pivot) {
@@ -852,6 +882,114 @@ private:
       }
     };
 
+    auto accept_target_steering = [&](double linear_x, double angular_z, bool is_pivot) {
+      double score = 0.0;
+      double avg_cost = 0.0;
+      double unknown_ratio = 0.0;
+      std::vector<Pose2D> path;
+      bool rejected_by_small_gap = false;
+      ++output.costmap.evaluated_trajectories;
+      if (!score_trajectory(
+              costmap,
+              safety,
+              output.costmap.long_range_target,
+              output.costmap.narrow_gap_target,
+              output.costmap.rejected_gap_sectors,
+              front_ratio,
+              linear_x,
+              angular_z,
+              score,
+              avg_cost,
+              unknown_ratio,
+              path,
+              rejected_by_small_gap))
+      {
+        ++output.costmap.rejected_trajectories;
+        if (rejected_by_small_gap)
+        {
+          ++output.costmap.rejected_small_gap_trajectories;
+        }
+        return false;
+      }
+
+      found = true;
+      best_score = score;
+      best_linear = linear_x;
+      best_angular = angular_z;
+      best_avg_cost = avg_cost;
+      best_unknown_ratio = unknown_ratio;
+      best_is_pivot = is_pivot;
+      best_is_target_steering = true;
+      best_path = path;
+      return true;
+    };
+
+    double steering_target_angle = 0.0;
+    bool has_steering_target = false;
+    if (output.costmap.narrow_gap_target.valid)
+    {
+      steering_target_angle = output.costmap.narrow_gap_target.angle_rad;
+      has_steering_target = true;
+    }
+    else if (output.costmap.long_range_target.valid)
+    {
+      steering_target_angle = output.costmap.long_range_target.angle_rad;
+      has_steering_target = true;
+    }
+
+    const double steering_target_error = std::fabs(normalize_angle_rad(steering_target_angle));
+    if (has_steering_target && steering_target_error > steering_deadband)
+    {
+      const double target_sign = sign_value(normalize_angle_rad(steering_target_angle));
+      const double min_target_turn = 0.50 * angular_limit;
+      double target_angular =
+          clamp_value(2.2 * normalize_angle_rad(steering_target_angle), -angular_limit, angular_limit);
+      if (steering_target_error > deg_to_rad(10.0) &&
+          std::fabs(target_angular) < min_target_turn)
+      {
+        target_angular = target_sign * min_target_turn;
+      }
+
+      const double heading_speed_scale =
+          clamp_value(1.0 - steering_target_error / deg_to_rad(75.0), 0.20, 1.0);
+      double steering_linear =
+          min_linear_speed_ + (speed_cap - min_linear_speed_) * front_ratio * heading_speed_scale;
+      bool steering_pivot = false;
+      if (front_ratio < 0.45 && steering_target_error > deg_to_rad(8.0))
+      {
+        steering_linear = 0.0;
+        steering_pivot = true;
+      }
+      else
+      {
+        steering_linear = clamp_value(steering_linear, min_linear_speed_, speed_cap);
+      }
+
+      accept_target_steering(steering_linear, target_angular, steering_pivot);
+      if (!found && steering_linear > min_linear_speed_ + 1e-6)
+      {
+        accept_target_steering(min_linear_speed_, target_angular, false);
+      }
+      if (!found && steering_target_error > deg_to_rad(8.0))
+      {
+        accept_target_steering(0.0, target_angular, true);
+      }
+      if (found)
+      {
+        output.costmap.target_steering_trajectory = true;
+        output.costmap.has_safe_trajectory = true;
+        output.costmap.best_score = best_score;
+        output.costmap.best_avg_cost = best_avg_cost;
+        output.costmap.best_unknown_ratio = best_unknown_ratio;
+        output.costmap.best_angular_z = best_angular;
+        output.costmap.selected_pivot_trajectory = best_is_pivot;
+        output.linear_x = best_linear;
+        output.angular_z = best_angular;
+        output.selected_path = best_path;
+        return true;
+      }
+    }
+
     for (int i = 0; i < sample_count; ++i)
     {
       const double ratio = sample_count == 1 ? 0.0 : static_cast<double>(i) / static_cast<double>(sample_count - 1);
@@ -870,7 +1008,13 @@ private:
         const double ratio = sample_count == 1 ? 0.0 : static_cast<double>(i) / static_cast<double>(sample_count - 1);
         const double angular_z = -angular_limit + 2.0 * angular_limit * ratio;
         const double turn_ratio = clamp_value(std::fabs(angular_z) / angular_limit, 0.0, 1.0);
-        if (turn_ratio < 0.20)
+        if (turn_ratio < 0.50)
+        {
+          continue;
+        }
+        if (has_steering_target &&
+            steering_target_error > steering_deadband &&
+            sign_value(angular_z) != sign_value(normalize_angle_rad(steering_target_angle)))
         {
           continue;
         }
@@ -889,6 +1033,7 @@ private:
     output.costmap.best_unknown_ratio = best_unknown_ratio;
     output.costmap.best_angular_z = best_angular;
     output.costmap.selected_pivot_trajectory = best_is_pivot;
+    output.costmap.target_steering_trajectory = best_is_target_steering;
     output.linear_x = best_linear;
     output.angular_z = best_angular;
     output.selected_path = best_path;
@@ -2788,7 +2933,7 @@ private:
     RCLCPP_INFO(
         this->get_logger(),
         "[%s] enabled=%s imu=%s odom=%s ref=%s tilt=%.1fdeg gyro_yaw=%.1fdeg "
-        "front=%.2fm left=%.2fm right=%.2fm narrow=%s obs=%d traj=%d/%d pivot=%s "
+        "front=%.2fm left=%.2fm right=%.2fm narrow=%s obs=%d traj=%d/%d steer=%s pivot=%s "
         "score=%.2f avg_cost=%.1f unknown=%.2f long=%s %.0fdeg/%.2fm "
         "gate=%s%s %.0fdeg/%.0fmm/%.2fm "
         "small_gap=%zu/%d "
@@ -2807,6 +2952,7 @@ private:
         output.costmap.obstacle_points,
         output.costmap.evaluated_trajectories,
         output.costmap.rejected_trajectories,
+        output.costmap.target_steering_trajectory ? "yes" : "no",
         output.costmap.selected_pivot_trajectory ? "yes" : "no",
         output.costmap.best_score,
         output.costmap.best_avg_cost,

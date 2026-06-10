@@ -18,7 +18,7 @@
 
 노드는 `/scan`의 `sensor_msgs/msg/LaserScan`, `/imu`의 `sensor_msgs/msg/Imu`, `/odom`의 `nav_msgs/msg/Odometry`를 구독합니다. `/scan`의 유효 hit point를 `/odom` pose 기준으로 짧게 저장하고, 제어 주기마다 `base_link` 기준 rolling local costmap으로 다시 변환합니다. 현재 scan ray는 free space로 표시하고, 저장된 obstacle point는 occupied cell로 표시한 뒤 `inflation_radius_m`만큼 추가 안전 cost를 퍼뜨립니다. 실제 로봇 크기인 `robot_radius_m`은 후보 궤적의 원형 footprint 검사에서 적용합니다.
 
-이후 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 추가로, LiDAR에서 관측된 gap의 boundary 폭이 `narrow_gap_min_width_m`보다 작으면 그 방향을 통과 불가능 sector로 기록하고 해당 sector를 향하는 궤적도 hard reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수, long-range target 보상, narrow gap target 보상을 합쳐 가장 좋은 궤적을 선택합니다. 전방이 가까울 때는 일반 전진 후보의 `min_linear_speed`는 유지하되, 선속도 0의 제자리 회전 후보도 추가로 평가합니다. 전방이 가까워질수록 start heading 유지와 long-range target 보상은 자동으로 약해져 C/U자 구조에서 local escape가 우선됩니다.
+이후 narrow gap 또는 long-range target이 현재 heading에서 충분히 벗어나 있으면, 먼저 target 방향으로 직접 조향하는 후보를 만들고 costmap으로 안전성을 확인합니다. 이 후보가 안전하면 점수식으로 우회하지 않고 바로 사용합니다. target steering 후보가 unsafe이거나 target 각도가 작으면 여러 `angular_z` 후보를 샘플링하고, unicycle 모델로 `trajectory_horizon_s`만큼 미래 궤적을 예측합니다. 각 궤적의 원형 footprint가 costmap에서 장애물 또는 높은 inflation cost를 밟으면 reject합니다. 추가로, LiDAR에서 관측된 gap의 boundary 폭이 `narrow_gap_min_width_m`보다 작으면 그 방향을 통과 불가능 sector로 기록하고 해당 sector를 향하는 궤적도 hard reject합니다. 살아남은 후보 중 전진성, 장애물 cost, unknown cost, 회전량, 직전 명령 변화량, 기준 heading 유지 점수, long-range target 보상, narrow gap target 보상을 합쳐 가장 좋은 궤적을 선택합니다. 전방이 가까울 때는 일반 전진 후보의 `min_linear_speed`는 유지하되, 선속도 0의 제자리 회전 후보도 추가로 평가합니다. 전방이 가까워질수록 start heading 유지와 long-range target 보상은 자동으로 약해져 C/U자 구조에서 local escape가 우선됩니다.
 
 기본 출력은 TurtleBot3 Foxy에서 흔히 쓰는 `geometry_msgs/msg/Twist` 타입의 `/cmd_vel`입니다. 기존 수업 코드처럼 `/cmd_vel`이 `geometry_msgs/msg/TwistStamped` 타입이어야 하는 환경이면 YAML에서 `cmd_vel_stamped: true`로 바꾸세요.
 
@@ -163,7 +163,7 @@ RViz에서 함께 보면 좋은 토픽입니다.
 
 - `trajectory_horizon_s`: 후보 궤적을 몇 초 앞까지 예측할지 정합니다. 길면 코너와 함정을 일찍 보지만 좁은 공간에서 보수적입니다.
 - `trajectory_dt_s`: 궤적 예측 샘플 간격입니다. 낮추면 정밀하지만 계산량이 늘어납니다.
-- `angular_sample_count`: 최종 회전 각도가 아니라 `/cmd_vel.angular.z` 회전 속도 후보를 몇 개 볼지 정합니다. 예를 들어 `max_angular_speed: 0.85`, `angular_sample_count: 15`이면 `-0.85 ~ +0.85 rad/s` 사이의 회전 속도 명령 15개를 만들고, 각 명령을 `trajectory_horizon_s` 동안 시뮬레이션합니다. 홀수로 두면 `0.0 rad/s` 직진 후보가 포함됩니다. 전방 거리가 가까우면 멈춘 상태에서 돌 수 있는 pivot 후보가 추가되어 로그의 `traj=evaluated/rejected`가 `angular_sample_count`보다 커질 수 있습니다.
+- `angular_sample_count`: 최종 회전 각도가 아니라 `/cmd_vel.angular.z` 회전 속도 후보를 몇 개 볼지 정합니다. 예를 들어 `max_angular_speed: 0.85`, `angular_sample_count: 15`이면 `-0.85 ~ +0.85 rad/s` 사이의 회전 속도 명령 15개를 만들고, 각 명령을 `trajectory_horizon_s` 동안 시뮬레이션합니다. 홀수로 두면 `0.0 rad/s` 직진 후보가 포함됩니다. Target-aware steering이 선택되면 이 전체 샘플링 전에 끝나므로 `traj`가 1~3개만 보일 수 있고, 전방 거리가 가까운데 fallback scoring으로 넘어가면 pivot 후보가 추가되어 `traj=evaluated/rejected`가 `angular_sample_count`보다 커질 수 있습니다.
 - `turn_slowdown_gain`: 회전량이 클수록 선속도를 낮추는 정도입니다.
 - `progress_reward_weight`: 앞으로 나아간 거리에 주는 보상입니다. 올리면 더 적극적으로 전진합니다.
 - `cost_obstacle_weight`: obstacle/inflation cost 감점입니다. 벽을 스치면 올리고, 너무 소극적이면 낮춥니다.
@@ -205,7 +205,7 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 - `narrow_gap_hold_max_angle_error_deg`: hysteresis로 같은 gate라고 볼 최대 각도 차이입니다.
 - `narrow_gap_speed_m_s`: `NARROW_GAP_COSTMAP_DRIVE`에서 사용할 선속도 상한입니다.
 
-RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭, 빨간색 짧은 선은 폭이 부족해서 hard reject된 gap 폭입니다. V자 코너에서도 주황/노랑 marker가 자주 뜨면 `narrow_gap_min_depth_gain_m`을 먼저 올리고, 그래도 gate 보상이 너무 강하면 `narrow_gap_bonus_weight`를 낮춥니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis로 이전 gate를 이어 잡았다는 뜻입니다. `small_gap=1/8`은 통과 불가능 gap sector 1개가 관측됐고, 후보 궤적 8개가 그 방향이라 reject됐다는 뜻입니다. `pivot=yes`는 전방이 가까워져 선속도 0의 제자리 회전 후보가 최종 선택됐다는 뜻입니다.
+RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭, 빨간색 짧은 선은 폭이 부족해서 hard reject된 gap 폭입니다. V자 코너에서도 주황/노랑 marker가 자주 뜨면 `narrow_gap_min_depth_gain_m`을 먼저 올리고, 그래도 gate 보상이 너무 강하면 `narrow_gap_bonus_weight`를 낮춥니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis로 이전 gate를 이어 잡았다는 뜻입니다. `small_gap=1/8`은 통과 불가능 gap sector 1개가 관측됐고, 후보 궤적 8개가 그 방향이라 reject됐다는 뜻입니다. `steer=yes`는 주황/초록 target 방향으로 직접 만든 target-aware steering 명령이 선택됐다는 뜻이고, `pivot=yes`는 선속도 0의 제자리 회전 후보가 최종 선택됐다는 뜻입니다.
 
 ### 좁은 통로 모드
 

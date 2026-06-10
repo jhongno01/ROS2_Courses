@@ -81,7 +81,12 @@ flowchart TD
     B2 --> B3["Find narrow gap target by boundary width"]
     B3 --> C{"Front inside emergency distance?"}
     C -- "Yes" --> D["EMERGENCY_TURN"]
-    C -- "No" --> E["Sample angular_z candidates"]
+    C -- "No" --> C2{"Target angle > 5 deg?"}
+    C2 -- "Yes" --> C3["Create target-aware steering command"]
+    C3 --> C4{"Costmap safe?"}
+    C4 -- "Yes" --> M["COSTMAP_DRIVE or NARROW_COSTMAP_DRIVE"]
+    C4 -- "No" --> E["Sample angular_z candidates"]
+    C2 -- "No" --> E
     E --> E2{"Front close?"}
     E2 -- "Yes" --> E3["Add in-place pivot candidates"]
     E2 -- "No" --> F["Predict unicycle trajectory"]
@@ -97,7 +102,9 @@ flowchart TD
     K -- "Yes" --> M["COSTMAP_DRIVE or NARROW_COSTMAP_DRIVE"]
 ```
 
-각 후보는 `max_angular_speed` 범위 안에서 샘플링한 `angular_z`와 감속된 `linear_x`를 갖습니다. 일반 전진 후보는 `min_linear_speed`를 유지합니다. 단, 전방 거리가 `front_slow_distance_m` 안에서 충분히 가까워지면 선속도 0의 제자리 회전 후보를 추가로 평가해, stuck/block으로 판정되기 전에 먼저 몸을 틀 수 있게 합니다. 후보 궤적은 `trajectory_horizon_s` 동안 `trajectory_dt_s` 간격으로 예측하고, 로봇 반지름 원형 footprint가 lethal 또는 높은 inflation cost를 밟으면 reject합니다. 또한 관측된 gap의 boundary 폭이 `narrow_gap_min_width_m`보다 작고 중심 ray가 충분히 깊으면 통과 불가능 gap sector로 기록하며, 그 sector를 향하는 후보 궤적도 hard reject합니다.
+주황색 narrow gap target 또는 초록색 long-range target이 현재 heading에서 5도 이상 벗어나 있으면, 먼저 target-aware steering 명령을 만듭니다. 이 명령은 target 방향에 비례한 `angular_z`를 바로 주고, target 각도가 클수록 선속도를 낮춥니다. 전방이 가까우면 같은 target 방향의 제자리 pivot으로 바뀝니다. 이 후보가 costmap footprint 검사에서 안전하면 기존 점수식으로 우회하지 않고 바로 선택합니다.
+
+Target steering 후보가 unsafe이거나 target 각도가 작으면 fallback으로 기존 후보 샘플링을 수행합니다. 각 후보는 `max_angular_speed` 범위 안에서 샘플링한 `angular_z`와 감속된 `linear_x`를 갖습니다. 일반 전진 후보는 `min_linear_speed`를 유지합니다. 단, 전방 거리가 `front_slow_distance_m` 안에서 충분히 가까워지면 선속도 0의 제자리 회전 후보를 추가로 평가해, stuck/block으로 판정되기 전에 먼저 몸을 틀 수 있게 합니다. 이때 target이 있으면 target 반대 방향 pivot 후보는 제외하고, 너무 느린 pivot 후보도 제외합니다. 후보 궤적은 `trajectory_horizon_s` 동안 `trajectory_dt_s` 간격으로 예측하고, 로봇 반지름 원형 footprint가 lethal 또는 높은 inflation cost를 밟으면 reject합니다. 또한 관측된 gap의 boundary 폭이 `narrow_gap_min_width_m`보다 작고 중심 ray가 충분히 깊으면 통과 불가능 gap sector로 기록하며, 그 sector를 향하는 후보 궤적도 hard reject합니다.
 
 점수는 아래 항목을 합쳐 계산합니다.
 
@@ -148,6 +155,6 @@ Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고
 
 - `/costmap_drive/local_costmap`: local occupancy grid입니다. 회색/검은 장애물과 inflation이 너무 커서 좁은 통로를 막으면 `inflation_radius_m` 또는 `robot_radius_m`을 낮춥니다.
 - `/costmap_drive/trajectory_markers`: 파란색은 최종 선택된 궤적, 초록색은 long-range target, 주황색은 narrow gap target, 노란색은 계산된 gate 폭, 빨간색은 폭 부족으로 hard reject된 gap 폭입니다. 제자리 pivot 후보가 선택되면 파란 궤적은 거의 점처럼 보일 수 있습니다. 궤적이 벽 쪽으로 붙으면 `cost_obstacle_weight`, `cost_lateral_weight`, `cost_turn_weight`를 조정합니다. 초록색 target이 옆방으로 자주 튀면 `long_range_clearance_search_deg` 또는 `long_range_clearance_weight`를 낮춥니다. 주황색 target이 V자 코너에 자주 뜨면 `narrow_gap_min_depth_gain_m`을 올리고, 실제 문틈을 놓치면 `narrow_gap_min_width_m`, `narrow_gap_boundary_obstacle_max_range_m`, `narrow_gap_bonus_weight`를 확인합니다.
-- 터미널 로그의 `traj=evaluated/rejected`: RViz marker가 아니라 `report_timer_callback`에서 찍는 숫자입니다. 전방이 가까울 때는 pivot 후보가 추가되어 `evaluated`가 `angular_sample_count`보다 커질 수 있습니다. `pivot=yes`는 최종 선택 후보가 선속도 0의 제자리 회전 후보라는 뜻입니다. 후보 대부분이 reject되면 costmap이 너무 보수적이거나 grid 범위가 너무 좁은 상태입니다.
+- 터미널 로그의 `traj=evaluated/rejected`: RViz marker가 아니라 `report_timer_callback`에서 찍는 숫자입니다. `steer=yes`는 target-aware steering 후보가 선택됐다는 뜻이라 `evaluated`가 1~3개로 작을 수 있습니다. 전방이 가까울 때 fallback scoring으로 넘어가면 pivot 후보가 추가되어 `evaluated`가 `angular_sample_count`보다 커질 수 있습니다. `pivot=yes`는 최종 선택 후보가 선속도 0의 제자리 회전 후보라는 뜻입니다. 후보 대부분이 reject되면 costmap이 너무 보수적이거나 grid 범위가 너무 좁은 상태입니다.
 
 즉 RViz에서는 map, 최종 선택 궤적, long-range target, narrow gap target을 보고, 후보 개수와 reject 개수는 노드 로그에서 확인합니다. 현재 코드는 모든 후보 궤적을 RViz로 그리지 않고, 최종 선택된 궤적과 target marker만 `/costmap_drive/trajectory_markers`로 발행합니다.
