@@ -37,10 +37,10 @@ turtlebot_autonomous_grid_drive:
     grid_memory_max_points: 30000
     obstacle_thickness_m: 0.02
     robot_radius_m: 0.105
-    clearance_margin_m: 0.02
+    clearance_margin_m: 0.01
 
     direction_sample_step_deg: 2.0
-    corridor_sample_step_m: 0.04
+    corridor_sample_step_m: 0.01
     direction_score_tolerance_ratio: 0.10
     direction_score_tolerance_abs: 0.20
     unknown_direction_penalty: 1.0
@@ -48,9 +48,9 @@ turtlebot_autonomous_grid_drive:
     low_cost_search_half_angle_deg: 90.0
     min_vector_norm: 0.05
 
-    repulsion_range_m: 0.55
-    repulsion_weight: 1.0
-    lowest_cost_weight: 1.0
+    repulsion_range_m: 0.40
+    repulsion_weight: 0.3
+    lowest_cost_weight: 0.6
     heading_forward_weight_initial: 1.0
     heading_forward_weight_min: 0.0
     heading_decay_distance_m: 4.0
@@ -59,14 +59,14 @@ turtlebot_autonomous_grid_drive:
     reverse_bias_full_m: 1.00
     reverse_bias_max_weight: 1.2
 
-    min_passable_gap_m: 0.20
+    min_passable_gap_m: 0.18
     gap_search_deg: 100.0
     gap_sector_half_width_deg: 10.0
     gap_boundary_search_deg: 45.0
     gap_boundary_obstacle_max_range_m: 0.80
     gap_boundary_drop_m: 0.08
     gap_min_center_distance_m: 0.30
-    gap_min_depth_gain_m: 0.25
+    gap_min_depth_gain_m: 0.23
 
     tilt_stop_deg: 60.0
     imu_timeout_seconds: 1.0
@@ -86,7 +86,7 @@ turtlebot_autonomous_grid_drive:
     emergency_backup_seconds: 0.8
     pivot_hold_seconds: 0.6
 
-    dead_end_memory_enabled: false
+    dead_end_memory_enabled: true
     dead_end_memory_seconds: 45.0
     dead_end_memory_max_entries: 20
     dead_end_memory_cell_cost: 1.5
