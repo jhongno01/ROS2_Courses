@@ -91,7 +91,7 @@ BLOCKED -> blocked_direction_penalty
 
 ## Dead-end Memory
 
-Dead-end memory는 `/map`을 발행하는 SLAM이 아니라 odom 기준 실패 corridor 기억입니다.
+Dead-end memory는 `/map`을 발행하는 SLAM이 아니라 odom 기준 실패 지점 기억입니다.
 
 기록 조건:
 
@@ -100,14 +100,14 @@ Dead-end memory는 `/map`을 발행하는 SLAM이 아니라 odom 기준 실패 c
 
 기록 내용:
 
-- 실패 지점의 odom `(x, y)`
+- 실패 방향 앞쪽 지점의 odom `(x, y)`
 - 실패 방향 yaw
 - 기록 시각
 - 같은 위치/방향에서 반복 실패한 hit count
 
-Local grid에 반영할 때는 실패 지점 하나만 찍지 않습니다. 실패 yaw 기준으로 뒤쪽 `dead_end_backtrack_distance_m`, 앞쪽 `dead_end_forward_extension_m` 구간을 corridor로 칠합니다. cost는 기본 `1.5`라서 `UNKNOWN`보다 비싸고 `BLOCKED`보다 낮습니다.
+Local grid에는 실패 지점 주변 작은 disk만 RViz 확인용으로 표시합니다. cost는 기본 `1.5`라서 `UNKNOWN`보다 비싸고 `BLOCKED`보다 낮습니다.
 
-이 corridor는 physical obstacle repulsion에는 쓰지 않습니다. 방향 score에서만 비싸게 보이므로, 필요한 경우 통과할 수 있고 방 중앙에 찍힌 한 점 때문에 탈출이 완전히 막히는 상황을 줄입니다.
+실제 회피는 넓은 corridor를 칠하는 방식이 아니라, 후보 방향이 저장된 실패 지점 쪽을 향하면 `dead_end_direction_penalty_weight`를 score에 더하는 방식입니다. 저장 지점이 후보 방향 뒤쪽에 있으면 penalty를 주지 않기 때문에, 막다른 길에서 빠져나오는 방향은 덜 방해합니다.
 
 런타임 토글:
 

@@ -86,13 +86,16 @@ turtlebot_autonomous_grid_drive:
     emergency_backup_seconds: 0.8
     pivot_hold_seconds: 0.6
 
-    dead_end_memory_enabled: true
-    dead_end_memory_seconds: 45.0
+    dead_end_memory_enabled: false
+    dead_end_memory_seconds: 25.0
     dead_end_memory_max_entries: 20
     dead_end_memory_cell_cost: 1.5
     dead_end_record_cooldown_seconds: 3.0
     dead_end_merge_distance_m: 0.35
     dead_end_merge_angle_deg: 35.0
-    dead_end_backtrack_distance_m: 1.20
-    dead_end_forward_extension_m: 0.20
-    dead_end_corridor_half_width_m: 0.28
+    dead_end_record_forward_m: 0.35
+    dead_end_direction_penalty_weight: 0.8
+    dead_end_marker_radius_m: 0.12
+    dead_end_backtrack_distance_m: 0.0
+    dead_end_forward_extension_m: 0.0
+    dead_end_corridor_half_width_m: 0.16

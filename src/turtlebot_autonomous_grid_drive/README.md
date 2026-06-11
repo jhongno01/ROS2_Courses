@@ -7,7 +7,7 @@
 - 로봇 주변 반경 `grid_radius_m` 안을 `FREE=0`, `UNKNOWN=1`, `BLOCKED=2`로 분류한다.
 - 통과 불가능한 작은 gap은 점수에서만 불리하게 보는 것이 아니라 실제 `BLOCKED`처럼 grid에 반영한다.
 - `lowest_cost_vector + obstacle_repulsion_vector + heading_bias + reverse_bias`를 합쳐 `/cmd_vel`을 만든다.
-- dead-end memory를 켜면 emergency/stuck이 발생한 방향의 odom corridor를 잠시 `1.5` cost로 기억한다.
+- dead-end memory를 켜면 emergency/stuck이 발생한 방향 앞쪽의 odom 실패 지점을 기억하고, 그 방향 후보에 penalty를 준다.
 - pivot은 메인 주행 전략이 아니라 emergency/stuck 상황의 fallback으로만 사용한다.
 
 ## Build
@@ -79,7 +79,7 @@ Grid cell 의미:
 
 - `FREE=0`: scan ray가 hit 전까지 확인한 빈 공간
 - `UNKNOWN=1`: hit 뒤쪽이거나 scan이 확인하지 못한 공간
-- `DEAD_END=1.5`: emergency/stuck으로 실패한 odom corridor의 임시 회피 비용
+- `DEAD_END=1.5`: emergency/stuck으로 실패한 odom 지점의 RViz 표시용 임시 회피 비용
 - `BLOCKED=2`: lidar hit, memory obstacle, 또는 통과 불가능한 small gap
 
 OccupancyGrid 표시값은 RViz 호환을 위해 `FREE=0`, `DEAD_END=75`, `BLOCKED=100`, `UNKNOWN=-1`로 발행합니다.
@@ -124,11 +124,11 @@ Reverse bias는 로봇이 최초 heading 반대 방향으로 계속 진행하려
 
 ### 5. Dead-end memory
 
-Dead-end memory는 SLAM map이 아닙니다. `/map`을 만들지 않고 odom 좌표계에 "이 위치 근처에서 이 방향으로 가면 막혔다"는 실패 corridor만 저장합니다.
+Dead-end memory는 SLAM map이 아닙니다. `/map`을 만들지 않고 odom 좌표계에 "이 방향 앞쪽에서 실패했다"는 작은 실패 지점만 저장합니다.
 
-Emergency stop 또는 stuck recovery가 발생하면 현재 odom pose와 실패 방향을 저장합니다. 이후 local grid를 만들 때, 그 실패 지점에서 뒤쪽으로 `dead_end_backtrack_distance_m`만큼 이어지는 corridor를 `dead_end_memory_cell_cost`로 칠합니다. 기본 cost는 `1.5`라서 `UNKNOWN=1`과 `BLOCKED=2` 사이입니다.
+Emergency stop 또는 stuck recovery가 발생하면 현재 odom pose에서 실패 방향으로 `dead_end_record_forward_m`만큼 앞의 지점을 저장합니다. RViz에는 그 지점 주변만 `dead_end_memory_cell_cost`로 표시합니다. 기본 cost는 `1.5`라서 `UNKNOWN=1`과 `BLOCKED=2` 사이입니다.
 
-이 방식은 방 전체를 막지 않습니다. 방 중앙에 점 하나를 hard obstacle로 두는 대신, 실패한 branch 방향만 약하게 비싸게 만들어 같은 막다른 길을 다시 고르는 확률을 낮춥니다.
+실제 회피는 넓은 영역을 grid에 칠해서 만들지 않고, lowest-cost 후보가 저장된 실패 지점 쪽을 향할 때 `dead_end_direction_penalty_weight`만큼 점수를 더하는 방식입니다. 저장 지점을 등지고 빠져나오는 방향에는 penalty가 붙지 않으므로, 막다른 길에서 탈출하는 경로를 덜 방해합니다.
 
 ### 6. Control
 
@@ -216,15 +216,16 @@ target_angle = atan2(final.y, final.x)
 ### Dead-end Memory
 
 - `dead_end_memory_enabled`: dead-end memory 기본 활성화 여부. 기본값은 `false`
-- `dead_end_memory_seconds`: 실패 corridor를 유지할 시간
-- `dead_end_memory_max_entries`: 저장할 실패 corridor 최대 개수
+- `dead_end_memory_seconds`: 실패 지점을 유지할 시간
+- `dead_end_memory_max_entries`: 저장할 실패 지점 최대 개수
 - `dead_end_memory_cell_cost`: local grid에 얹는 virtual cost. 기본 `1.5`
 - `dead_end_record_cooldown_seconds`: 같은 상황에서 memory가 과도하게 찍히지 않도록 하는 기록 간격
 - `dead_end_merge_distance_m`: 가까운 실패 기록을 하나로 합칠 거리
 - `dead_end_merge_angle_deg`: 방향이 비슷하면 같은 실패 branch로 볼 각도
-- `dead_end_backtrack_distance_m`: 실패 지점에서 뒤쪽으로 corridor를 칠할 길이
-- `dead_end_forward_extension_m`: 실패 방향 앞쪽으로 조금 더 칠할 길이
-- `dead_end_corridor_half_width_m`: 실패 corridor 반폭
+- `dead_end_record_forward_m`: 실패 지점을 현재 로봇 위치보다 앞쪽에 기록할 거리
+- `dead_end_direction_penalty_weight`: 실패 지점 쪽 후보 방향에 더할 penalty
+- `dead_end_marker_radius_m`: RViz에 표시할 dead-end 지점 반경
+- `dead_end_corridor_half_width_m`: 실패 지점 쪽 후보 방향으로 인정할 반폭
 
 ## Tuning Direction
 
@@ -235,5 +236,5 @@ target_angle = atan2(final.y, final.x)
 - 방 안에서 출구보다 열린 실내 쪽을 오래 맴돌면 `unknown_direction_penalty`를 조금 낮추고, `repulsion_weight`가 과도하지 않은지 봅니다.
 - 통과 가능한 gap을 막는다면 `min_passable_gap_m`을 낮추거나 `gap_boundary_drop_m`, `gap_min_depth_gain_m`을 완화합니다.
 - 너무 얇은 틈을 가려 하면 `min_passable_gap_m`을 올리고 `gap_boundary_drop_m`, `gap_min_depth_gain_m`을 키웁니다.
-- Y자에서 넓은 막다른 길을 반복해서 고르면 `set_dead_end_memory`를 켜고 `dead_end_memory_cell_cost`, `dead_end_backtrack_distance_m`을 조금씩 올립니다.
-- Dead-end memory를 켠 뒤 탈출로까지 싫어하면 `dead_end_corridor_half_width_m`을 줄이거나 `dead_end_memory_cell_cost`를 낮춥니다.
+- Y자에서 넓은 막다른 길을 반복해서 고르면 `set_dead_end_memory`를 켜고 `dead_end_direction_penalty_weight`를 조금씩 올립니다.
+- Dead-end memory를 켠 뒤 탈출로까지 싫어하면 `dead_end_corridor_half_width_m` 또는 `dead_end_direction_penalty_weight`를 낮춥니다.

@@ -10,7 +10,7 @@
 - emergency 상황에서 뒤 corridor가 FREE일 때만 짧게 후진하는지 확인
 - stuck 상황에서 odom 진행 없음이 감지되고 backup 또는 recovery turn으로 넘어가는지 확인
 - Y자 갈림길에서 넓은 막다른 길 진입 후 `set_dead_end_memory`를 켰을 때 같은 branch 재진입이 줄어드는지 확인
-- Dead-end memory RViz 표시값 75가 방 전체가 아니라 실패 corridor 쪽에만 생기는지 확인
+- Dead-end memory RViz 표시값 75가 방 전체가 아니라 실패 지점 주변 작은 disk로만 생기는지 확인
 - 벽에 여전히 붙으면 `repulsion_weight`, `repulsion_range_m`, `front_slow_distance_m`부터 튜닝
 - 너무 얇은 gap을 보려 하면 `min_passable_gap_m`, `gap_boundary_drop_m`, `gap_min_depth_gain_m` 조정
-- Dead-end memory가 탈출까지 방해하면 `dead_end_corridor_half_width_m` 또는 `dead_end_memory_cell_cost`를 낮춰보기
+- Dead-end memory가 탈출까지 방해하면 `dead_end_corridor_half_width_m` 또는 `dead_end_direction_penalty_weight`를 낮춰보기
