@@ -253,11 +253,13 @@ public:
         direction_score_tolerance_abs_(this->declare_parameter<double>("direction_score_tolerance_abs", 0.20)),
         unknown_direction_penalty_(this->declare_parameter<double>("unknown_direction_penalty", 1.0)),
         blocked_direction_penalty_(this->declare_parameter<double>("blocked_direction_penalty", 2.0)),
+        low_cost_search_half_angle_deg_(this->declare_parameter<double>("low_cost_search_half_angle_deg", 180.0)),
         min_vector_norm_(this->declare_parameter<double>("min_vector_norm", 0.05)),
         repulsion_range_m_(this->declare_parameter<double>("repulsion_range_m", 0.55)),
         repulsion_weight_(this->declare_parameter<double>("repulsion_weight", 1.0)),
         lowest_cost_weight_(this->declare_parameter<double>("lowest_cost_weight", 1.0)),
         heading_forward_weight_initial_(this->declare_parameter<double>("heading_forward_weight_initial", 1.0)),
+        heading_forward_weight_min_(this->declare_parameter<double>("heading_forward_weight_min", 0.0)),
         heading_decay_distance_m_(this->declare_parameter<double>("heading_decay_distance_m", 4.0)),
         reverse_heading_threshold_deg_(this->declare_parameter<double>("reverse_heading_threshold_deg", 150.0)),
         reverse_bias_start_m_(this->declare_parameter<double>("reverse_bias_start_m", 0.20)),
@@ -665,9 +667,11 @@ private:
     summary.dead_end_memory_count = dead_end_memory_count_snapshot();
     std::vector<DirectionCandidate> candidates;
     const double step_deg = std::max(1.0, direction_sample_step_deg_);
+    const double search_half_deg =
+        clamp_value(low_cost_search_half_angle_deg_, step_deg, 180.0);
     double best_score = std::numeric_limits<double>::infinity();
 
-    for (double angle_deg = -180.0; angle_deg < 180.0; angle_deg += step_deg)
+    for (double angle_deg = -search_half_deg; angle_deg <= search_half_deg + 1e-6; angle_deg += step_deg)
     {
       DirectionCandidate candidate = score_direction(grid, deg_to_rad(angle_deg));
       candidates.push_back(candidate);
@@ -825,7 +829,11 @@ private:
         1.0 - distance / std::max(0.01, heading_decay_distance_m_),
         0.0,
         1.0);
-    const double weight = heading_forward_weight_initial_ * decay;
+    const double floor_weight = clamp_value(
+        heading_forward_weight_min_,
+        0.0,
+        std::max(0.0, heading_forward_weight_initial_));
+    const double weight = floor_weight + (heading_forward_weight_initial_ - floor_weight) * decay;
     const double angle = normalize_angle_rad(heading_reference_yaw_snapshot() - safety.odom_pose.yaw);
     Vector2D bias;
     bias.x = weight * std::cos(angle);
@@ -1880,11 +1888,13 @@ private:
   const double direction_score_tolerance_abs_;
   const double unknown_direction_penalty_;
   const double blocked_direction_penalty_;
+  const double low_cost_search_half_angle_deg_;
   const double min_vector_norm_;
   const double repulsion_range_m_;
   const double repulsion_weight_;
   const double lowest_cost_weight_;
   const double heading_forward_weight_initial_;
+  const double heading_forward_weight_min_;
   const double heading_decay_distance_m_;
   const double reverse_heading_threshold_deg_;
   const double reverse_bias_start_m_;

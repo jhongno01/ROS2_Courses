@@ -112,11 +112,13 @@ Grid는 기본 반경 `2.0m`, 해상도 `0.02m`입니다. 현재 scan은 memory 
 
 ### 4. Vector field
 
-360도 방향을 `direction_sample_step_deg` 간격으로 샘플링합니다. 각 방향마다 로봇 폭만큼의 corridor를 훑으며 `FREE`, `UNKNOWN`, `BLOCKED` cell cost를 거리 가중으로 누적합니다.
+Grid와 obstacle repulsion은 360도를 그대로 사용합니다. 다만 lowest-cost 방향 후보는 `low_cost_search_half_angle_deg`로 제한할 수 있습니다. 기본 YAML은 로봇 전방 기준 `-90deg ~ +90deg`만 lowest-cost 후보로 봅니다.
+
+각 후보 방향마다 로봇 폭만큼의 corridor를 훑으며 `FREE`, `UNKNOWN`, `BLOCKED` cell cost를 거리 가중으로 누적합니다.
 
 가장 낮은 cost 방향 하나만 쓰지 않고, 비슷하게 좋은 방향들을 평균해서 `lowest_cost_vector`를 만듭니다. 그 뒤 가까운 BLOCKED cell에서 멀어지는 `obstacle_repulsion_vector`를 더합니다.
 
-초기 heading bias는 시작 직후 뒤쪽으로 많이 가는 것을 막는 용도입니다. `heading_decay_distance_m`까지 누적 주행거리가 늘어나면 선형으로 0까지 줄어듭니다.
+초기 heading bias는 시작 직후 뒤쪽으로 많이 가는 것을 막는 용도입니다. `heading_decay_distance_m`까지 odom 누적 주행거리가 늘어나면 `heading_forward_weight_initial`에서 `heading_forward_weight_min`까지 선형으로 줄어듭니다.
 
 Reverse bias는 로봇이 최초 heading 반대 방향으로 계속 진행하려 할 때만 켜집니다. 반대 방향으로 이동한 거리에 비례해 원 heading 쪽 복귀 vector를 키웁니다.
 
@@ -170,6 +172,7 @@ target_angle = atan2(final.y, final.x)
 ### Direction Score
 
 - `direction_sample_step_deg`: 360도 후보 방향 샘플 간격
+- `low_cost_search_half_angle_deg`: lowest-cost 후보를 로봇 전방 기준 반각 안으로 제한. `90.0`이면 `-90deg ~ +90deg`, `180.0`이면 360도 전체
 - `corridor_sample_step_m`: corridor 내부 샘플 간격
 - `unknown_direction_penalty`: UNKNOWN cell 비용
 - `blocked_direction_penalty`: BLOCKED cell 비용
@@ -181,7 +184,8 @@ target_angle = atan2(final.y, final.x)
 ### Heading / Reverse Bias
 
 - `heading_forward_weight_initial`: 시작 heading 방향 초기 bias
-- `heading_decay_distance_m`: 이 누적 주행거리에서 heading bias가 0이 됨. 기본 `4.0m`
+- `heading_forward_weight_min`: decay가 끝난 뒤에도 남길 heading bias 최소값
+- `heading_decay_distance_m`: 이 odom 누적 주행거리에서 heading bias가 최소값에 도달함. 기본 `4.0m`
 - `reverse_heading_threshold_deg`: 이 각도 이상 반대 방향을 보려 할 때 reverse bias 후보로 봄
 - `reverse_bias_start_m`: 반대 방향 진행 후 이 거리까지는 복귀 bias를 거의 주지 않음
 - `reverse_bias_full_m`: 이 거리에서 reverse bias가 최대치가 됨
@@ -226,6 +230,7 @@ target_angle = atan2(final.y, final.x)
 
 - 벽에 가까이 붙으면 `repulsion_weight`를 올리거나 `repulsion_range_m`을 키웁니다.
 - 넓은 구간에서도 너무 느리면 `front_slow_distance_m`을 줄이거나 `max_linear_speed`를 올립니다.
+- heading 영향이 너무 빨리 사라지면 `heading_decay_distance_m`을 키우거나 `heading_forward_weight_min`을 올립니다.
 - 출발 직후 heading을 너무 고집하면 `heading_forward_weight_initial`을 낮추거나 `heading_decay_distance_m`을 줄입니다.
 - 방 안에서 출구보다 열린 실내 쪽을 오래 맴돌면 `unknown_direction_penalty`를 조금 낮추고, `repulsion_weight`가 과도하지 않은지 봅니다.
 - 통과 가능한 gap을 막는다면 `min_passable_gap_m`을 낮추거나 `gap_boundary_drop_m`, `gap_min_depth_gain_m`을 완화합니다.

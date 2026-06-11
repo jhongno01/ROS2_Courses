@@ -72,7 +72,9 @@ Grid는 로봇 중심 원형 범위로 봅니다.
 
 ## Direction Score
 
-360도 전체를 `direction_sample_step_deg` 간격으로 샘플링합니다. 각 방향은 로봇 폭 corridor입니다.
+Grid와 obstacle repulsion은 360도 전체를 사용합니다. 하지만 lowest-cost 방향 후보는 `low_cost_search_half_angle_deg` 안에서만 샘플링합니다. 기본 YAML의 `90.0`은 로봇 전방 기준 `-90deg ~ +90deg`만 lowest-cost 후보로 본다는 뜻입니다.
+
+각 방향은 로봇 폭 corridor입니다.
 
 각 corridor 내부 cell을 보며 비용을 누적합니다.
 
@@ -133,7 +135,9 @@ final_vector =
 - `heading_bias`: 시작 heading을 초반에만 약하게 유지
 - `reverse_bias`: 최초 heading 반대 방향으로 오래 진행하려 할 때 원 heading 쪽으로 복귀
 
-초기 heading bias는 코스 전체 목표가 아닙니다. 시작하자마자 뒤쪽의 넓은 공간으로 돌아가는 현상을 줄이는 보조항입니다. `heading_decay_distance_m`만큼 주행하면 0에 가까워집니다.
+초기 heading bias는 코스 전체 목표가 아닙니다. 시작하자마자 뒤쪽의 넓은 공간으로 돌아가는 현상을 줄이는 보조항입니다. `heading_decay_distance_m`만큼 odom 누적 주행거리가 늘어나면 `heading_forward_weight_min`까지 줄어듭니다.
+
+여기서 누적 주행거리는 시작점과 현재 위치의 직선거리가 아니라, odom pose 사이의 translation 변화량을 계속 더한 값입니다. 제자리 회전은 원칙적으로 거의 더해지지 않지만, odom translation 노이즈나 미끄러짐이 있으면 조금씩 누적될 수 있습니다.
 
 ## Control
 

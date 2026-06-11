@@ -45,12 +45,14 @@ turtlebot_autonomous_grid_drive:
     direction_score_tolerance_abs: 0.20
     unknown_direction_penalty: 1.0
     blocked_direction_penalty: 2.0
+    low_cost_search_half_angle_deg: 90.0
     min_vector_norm: 0.05
 
     repulsion_range_m: 0.55
     repulsion_weight: 1.0
     lowest_cost_weight: 1.0
     heading_forward_weight_initial: 1.0
+    heading_forward_weight_min: 0.0
     heading_decay_distance_m: 4.0
     reverse_heading_threshold_deg: 150.0
     reverse_bias_start_m: 0.20
