@@ -86,7 +86,7 @@ turtlebot_autonomous_grid_drive:
     emergency_backup_seconds: 0.8
     pivot_hold_seconds: 0.6
 
-    dead_end_memory_enabled: true
+    dead_end_memory_enabled: false
     dead_end_memory_seconds: 45.0
     dead_end_memory_max_entries: 20
     dead_end_memory_cell_cost: 1.5
