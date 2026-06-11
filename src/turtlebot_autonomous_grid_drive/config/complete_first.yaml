@@ -45,18 +45,18 @@ turtlebot_autonomous_grid_drive:
     direction_score_tolerance_abs: 0.20
     unknown_direction_penalty: 1.0
     blocked_direction_penalty: 2.0
-    low_cost_search_half_angle_deg: 90.0
+    low_cost_search_half_angle_deg: 120.0
     min_vector_norm: 0.05
 
     repulsion_range_m: 0.40
-    repulsion_weight: 0.3
-    lowest_cost_weight: 0.6
+    repulsion_weight: 0.35
+    lowest_cost_weight: 0.7
     heading_forward_weight_initial: 1.0
-    heading_forward_weight_min: 0.0
-    heading_decay_distance_m: 4.0
+    heading_forward_weight_min: 0.3
+    heading_decay_distance_m: 1.6
     reverse_heading_threshold_deg: 150.0
     reverse_bias_start_m: 0.20
-    reverse_bias_full_m: 1.00
+    reverse_bias_full_m: 0.80
     reverse_bias_max_weight: 1.2
 
     min_passable_gap_m: 0.18
@@ -65,7 +65,7 @@ turtlebot_autonomous_grid_drive:
     gap_boundary_search_deg: 45.0
     gap_boundary_obstacle_max_range_m: 0.80
     gap_boundary_drop_m: 0.08
-    gap_min_center_distance_m: 0.30
+    gap_min_center_distance_m: 0.25
     gap_min_depth_gain_m: 0.23
 
     tilt_stop_deg: 60.0
@@ -74,7 +74,7 @@ turtlebot_autonomous_grid_drive:
 
     stuck_recovery_enabled: true
     stuck_command_linear_threshold: 0.03
-    stuck_min_progress_m: 0.03
+    stuck_min_progress_m: 0.10
     stuck_hold_seconds: 4.0
     stuck_backup_speed: 0.04
     stuck_backup_seconds: 1.2
@@ -86,12 +86,8 @@ turtlebot_autonomous_grid_drive:
     emergency_backup_seconds: 0.8
     pivot_hold_seconds: 0.6
 
-    dead_end_memory_enabled: false
-<<<<<<< HEAD
-    dead_end_memory_seconds: 45.0
-=======
+    dead_end_memory_enabled: true
     dead_end_memory_seconds: 25.0
->>>>>>> a1b28468954d0af149f8b2750da1913806a85abc
     dead_end_memory_max_entries: 20
     dead_end_memory_cell_cost: 1.5
     dead_end_record_cooldown_seconds: 3.0
