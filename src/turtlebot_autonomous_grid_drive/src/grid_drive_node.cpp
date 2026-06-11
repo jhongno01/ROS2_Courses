@@ -295,8 +295,11 @@ public:
         dead_end_record_cooldown_seconds_(this->declare_parameter<double>("dead_end_record_cooldown_seconds", 3.0)),
         dead_end_merge_distance_m_(this->declare_parameter<double>("dead_end_merge_distance_m", 0.35)),
         dead_end_merge_angle_deg_(this->declare_parameter<double>("dead_end_merge_angle_deg", 35.0)),
-        dead_end_backtrack_distance_m_(this->declare_parameter<double>("dead_end_backtrack_distance_m", 1.20)),
-        dead_end_forward_extension_m_(this->declare_parameter<double>("dead_end_forward_extension_m", 0.20)),
+        dead_end_record_forward_m_(this->declare_parameter<double>("dead_end_record_forward_m", 0.35)),
+        dead_end_direction_penalty_weight_(this->declare_parameter<double>("dead_end_direction_penalty_weight", 0.8)),
+        dead_end_marker_radius_m_(this->declare_parameter<double>("dead_end_marker_radius_m", 0.12)),
+        dead_end_backtrack_distance_m_(this->declare_parameter<double>("dead_end_backtrack_distance_m", 0.0)),
+        dead_end_forward_extension_m_(this->declare_parameter<double>("dead_end_forward_extension_m", 0.0)),
         dead_end_corridor_half_width_m_(this->declare_parameter<double>("dead_end_corridor_half_width_m", 0.28))
   {
     enabled_requested_ = auto_start_;
@@ -673,7 +676,7 @@ private:
 
     for (double angle_deg = -search_half_deg; angle_deg <= search_half_deg + 1e-6; angle_deg += step_deg)
     {
-      DirectionCandidate candidate = score_direction(grid, deg_to_rad(angle_deg));
+      DirectionCandidate candidate = score_direction(grid, deg_to_rad(angle_deg), &safety.odom_pose);
       candidates.push_back(candidate);
       ++summary.sampled_directions;
       if (!candidate.driveable)
@@ -729,7 +732,10 @@ private:
     return summary;
   }
 
-  DirectionCandidate score_direction(const LocalGrid &grid, double angle_rad) const
+  DirectionCandidate score_direction(
+      const LocalGrid &grid,
+      double angle_rad,
+      const Pose2D *odom_pose = nullptr) const
   {
     DirectionCandidate candidate;
     candidate.angle_rad = angle_rad;
@@ -767,6 +773,10 @@ private:
       return candidate;
     }
     candidate.score /= static_cast<double>(samples);
+    if (odom_pose)
+    {
+      candidate.score += dead_end_direction_penalty(angle_rad, *odom_pose);
+    }
     if (candidate.min_blocked_distance <= front_stop_distance_m_)
     {
       candidate.driveable = false;
@@ -789,6 +799,61 @@ private:
       return state;
     }
     return unknown_direction_penalty_;
+  }
+
+  double dead_end_direction_penalty(double angle_rad, const Pose2D &odom_pose) const
+  {
+    std::vector<DeadEndMemory> memories;
+    bool enabled = false;
+    {
+      std::lock_guard<std::mutex> lock(data_mutex_);
+      enabled = dead_end_memory_enabled_runtime_;
+      memories.assign(dead_end_memories_.begin(), dead_end_memories_.end());
+    }
+    if (!enabled || memories.empty())
+    {
+      return 0.0;
+    }
+
+    const double cos_robot = std::cos(odom_pose.yaw);
+    const double sin_robot = std::sin(odom_pose.yaw);
+    const double cos_dir = std::cos(angle_rad);
+    const double sin_dir = std::sin(angle_rad);
+    const double corridor_half_width =
+        std::max(grid_resolution_m_, dead_end_corridor_half_width_m_);
+    double penalty = 0.0;
+
+    for (const auto &memory : memories)
+    {
+      const double dx = memory.x - odom_pose.x;
+      const double dy = memory.y - odom_pose.y;
+      const double local_x = cos_robot * dx + sin_robot * dy;
+      const double local_y = -sin_robot * dx + cos_robot * dy;
+      const double distance = std::sqrt(local_x * local_x + local_y * local_y);
+      if (distance > grid_radius_m_ || distance < robot_radius_m_)
+      {
+        continue;
+      }
+
+      const double forward_projection = local_x * cos_dir + local_y * sin_dir;
+      if (forward_projection <= robot_radius_m_)
+      {
+        continue;
+      }
+
+      const double lateral = std::fabs(-local_x * sin_dir + local_y * cos_dir);
+      if (lateral > corridor_half_width)
+      {
+        continue;
+      }
+
+      const double lateral_scale = 1.0 - lateral / corridor_half_width;
+      const double distance_scale = 1.0 - clamp_value(distance / std::max(0.01, grid_radius_m_), 0.0, 1.0);
+      const double hit_scale = clamp_value(0.5 + 0.25 * static_cast<double>(memory.hit_count), 0.5, 1.0);
+      penalty += dead_end_direction_penalty_weight_ * lateral_scale * (0.35 + 0.65 * distance_scale) * hit_scale;
+    }
+
+    return penalty;
   }
 
   Vector2D compute_repulsion_vector(const LocalGrid &grid) const
@@ -1068,27 +1133,17 @@ private:
     }
 
     const double cost = clamp_value(dead_end_memory_cell_cost_, kUnknown, kBlocked);
-    const double step = std::max(grid.resolution, corridor_sample_step_m_);
     const double cos_robot = std::cos(odom_pose.yaw);
     const double sin_robot = std::sin(odom_pose.yaw);
-    const double half_width = std::max(grid.resolution, dead_end_corridor_half_width_m_);
+    const double marker_radius = std::max(grid.resolution, dead_end_marker_radius_m_);
 
     for (const auto &memory : memories)
     {
-      const double cos_bad = std::cos(memory.yaw);
-      const double sin_bad = std::sin(memory.yaw);
-      for (double distance = -std::max(0.0, dead_end_backtrack_distance_m_);
-           distance <= std::max(0.0, dead_end_forward_extension_m_) + 1e-6;
-           distance += step)
-      {
-        const double wx = memory.x + distance * cos_bad;
-        const double wy = memory.y + distance * sin_bad;
-        const double dx = wx - odom_pose.x;
-        const double dy = wy - odom_pose.y;
-        const double local_x = cos_robot * dx + sin_robot * dy;
-        const double local_y = -sin_robot * dx + cos_robot * dy;
-        mark_disk_max(grid, local_x, local_y, half_width, cost);
-      }
+      const double dx = memory.x - odom_pose.x;
+      const double dy = memory.y - odom_pose.y;
+      const double local_x = cos_robot * dx + sin_robot * dy;
+      const double local_y = -sin_robot * dx + cos_robot * dy;
+      mark_disk_max(grid, local_x, local_y, marker_radius, cost);
     }
   }
 
@@ -1325,7 +1380,7 @@ private:
 
     if (output.vectors.front_m <= emergency_stop_distance_m_)
     {
-      record_dead_end_memory(odom_pose, 0.0, now, "emergency");
+      record_dead_end_memory(odom_pose, 0.0, dead_end_record_forward_m_, now, "emergency");
       if (rear_corridor_is_clear(grid, emergency_backup_speed_ * emergency_backup_seconds_))
       {
         recovery_phase_ = RecoveryPhase::EMERGENCY_BACKUP;
@@ -1439,6 +1494,7 @@ private:
     record_dead_end_memory(
         odom_pose,
         std::atan2(output.vectors.final_vector.y, output.vectors.final_vector.x),
+        dead_end_record_forward_m_,
         now,
         "stuck");
     if (rear_corridor_is_clear(grid, stuck_backup_speed_ * stuck_backup_seconds_))
@@ -1455,6 +1511,7 @@ private:
   void record_dead_end_memory(
       const Pose2D &odom_pose,
       double bad_local_angle,
+      double record_local_distance,
       const rclcpp::Time &now,
       const std::string &reason)
   {
@@ -1470,18 +1527,21 @@ private:
     }
 
     const double bad_yaw = normalize_angle_rad(odom_pose.yaw + bad_local_angle);
+    const double record_distance = std::max(robot_radius_m_, record_local_distance);
+    const double record_x = odom_pose.x + record_distance * std::cos(bad_yaw);
+    const double record_y = odom_pose.y + record_distance * std::sin(bad_yaw);
     for (auto &memory : dead_end_memories_)
     {
-      const double dx = memory.x - odom_pose.x;
-      const double dy = memory.y - odom_pose.y;
+      const double dx = memory.x - record_x;
+      const double dy = memory.y - record_y;
       const double distance = std::sqrt(dx * dx + dy * dy);
       const double yaw_error = std::fabs(normalize_angle_rad(memory.yaw - bad_yaw));
       if (distance <= dead_end_merge_distance_m_ &&
           yaw_error <= deg_to_rad(dead_end_merge_angle_deg_))
       {
         const double old_weight = static_cast<double>(std::max(1, memory.hit_count));
-        memory.x = (memory.x * old_weight + odom_pose.x) / (old_weight + 1.0);
-        memory.y = (memory.y * old_weight + odom_pose.y) / (old_weight + 1.0);
+        memory.x = (memory.x * old_weight + record_x) / (old_weight + 1.0);
+        memory.y = (memory.y * old_weight + record_y) / (old_weight + 1.0);
         memory.yaw = bad_yaw;
         memory.stamp = now;
         memory.hit_count += 1;
@@ -1497,8 +1557,8 @@ private:
     }
 
     DeadEndMemory memory;
-    memory.x = odom_pose.x;
-    memory.y = odom_pose.y;
+    memory.x = record_x;
+    memory.y = record_y;
     memory.yaw = bad_yaw;
     memory.stamp = now;
     dead_end_memories_.push_back(memory);
@@ -1932,6 +1992,9 @@ private:
   const double dead_end_record_cooldown_seconds_;
   const double dead_end_merge_distance_m_;
   const double dead_end_merge_angle_deg_;
+  const double dead_end_record_forward_m_;
+  const double dead_end_direction_penalty_weight_;
+  const double dead_end_marker_radius_m_;
   const double dead_end_backtrack_distance_m_;
   const double dead_end_forward_extension_m_;
   const double dead_end_corridor_half_width_m_;
