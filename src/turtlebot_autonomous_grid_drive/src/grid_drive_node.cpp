@@ -299,6 +299,18 @@ public:
   {
     enabled_requested_ = auto_start_;
     dead_end_memory_enabled_runtime_ = dead_end_memory_enabled_default_;
+
+    const rclcpp::Time zero = zero_time();
+    latest_scan_time_ = zero;
+    latest_imu_time_ = zero;
+    latest_odom_time_ = zero;
+    last_integrated_scan_time_ = zero;
+    recovery_started_at_ = zero;
+    last_stuck_recovery_finished_at_ = zero;
+    stuck_watch_started_at_ = zero;
+    last_dead_end_recorded_at_ = zero;
+    pivot_hold_started_at_ = zero;
+
     if (cmd_vel_stamped_)
     {
       cmd_vel_stamped_publisher_ =
@@ -357,6 +369,11 @@ public:
   }
 
 private:
+  rclcpp::Time zero_time() const
+  {
+    return rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
+  }
+
   void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
   {
     auto sanitized = std::make_shared<sensor_msgs::msg::LaserScan>(*msg);
