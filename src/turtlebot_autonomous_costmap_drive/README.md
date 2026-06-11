@@ -201,11 +201,11 @@ RViz의 `/costmap_drive/trajectory_markers`에는 파란색 최종 궤적과 함
 - `narrow_gap_min_sector_distance_m`: 중심 주변 섹터의 최소 clearance가 이 값 이상이어야 합니다.
 - `narrow_gap_min_depth_gain_m`: 중심 ray가 좌우 boundary 중 더 먼 쪽보다도 이 거리 이상 깊어야 합니다. V자 코너가 gate로 잡히면 이 값을 올리고, 실제 230~300mm 문틈을 놓치면 낮춥니다.
 - `narrow_gap_alignment_deg`: 후보 trajectory 최종 heading이 gate 중심과 이 각도 안에 들어오면 보상을 받습니다.
-- `narrow_gap_hold_seconds`: 같은 gate가 비슷한 각도에서 계속 보이면 이 시간 동안 target 선택을 유지해 S자/방 구조에서 target 튐을 줄입니다.
+- `narrow_gap_hold_seconds`: 같은 gate가 비슷한 각도에서 계속 보이면 target 선택을 유지하고, gate가 잠깐 사라져도 이 시간 동안 직전 target을 반환해 문턱 통과 중 target이 끊기는 현상을 줄입니다.
 - `narrow_gap_hold_max_angle_error_deg`: hysteresis로 같은 gate라고 볼 최대 각도 차이입니다.
 - `narrow_gap_speed_m_s`: `NARROW_GAP_COSTMAP_DRIVE`에서 사용할 선속도 상한입니다.
 
-RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭, 빨간색 짧은 선은 폭이 부족해서 hard reject된 gap 폭입니다. 주황색 선의 각도는 노란색 gate 폭의 midpoint를 기준으로 하고, 선 길이는 gap 안쪽 깊이를 보여주기 위해 중심 ray의 깊이를 사용합니다. V자 코너에서도 주황/노랑 marker가 자주 뜨면 `narrow_gap_min_depth_gain_m`을 먼저 올리고, 그래도 gate 보상이 너무 강하면 `narrow_gap_bonus_weight`를 낮춥니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis로 이전 gate를 이어 잡았다는 뜻입니다. `small_gap=1/8`은 통과 불가능 gap sector 1개가 관측됐고, 후보 궤적 8개가 그 방향이라 reject됐다는 뜻입니다. `steer=yes`는 주황/초록 target 방향으로 직접 만든 target-aware steering 명령이 선택됐다는 뜻이고, `pivot=yes`는 선속도 0의 제자리 회전 후보가 최종 선택됐다는 뜻입니다.
+RViz의 `/costmap_drive/trajectory_markers`에서 주황색 선은 narrow gap 중심 target, 노란색 짧은 선은 계산된 gate 폭, 빨간색 짧은 선은 폭이 부족해서 hard reject된 gap 폭입니다. 주황색 선의 각도는 노란색 gate 폭의 midpoint를 기준으로 하고, 선 길이는 gap 안쪽 깊이를 보여주기 위해 중심 ray의 깊이를 사용합니다. V자 코너에서도 주황/노랑 marker가 자주 뜨면 `narrow_gap_min_depth_gain_m`을 먼저 올리고, 그래도 gate 보상이 너무 강하면 `narrow_gap_bonus_weight`를 낮춥니다. 터미널 로그의 `gate=yes* 12deg/260mm/0.80m`는 gate target이 있고, `*`는 hysteresis 또는 잠깐 사라진 gate hold로 이전 gate를 이어 잡았다는 뜻입니다. `small_gap=1/8`은 통과 불가능 gap sector 1개가 관측됐고, 후보 궤적 8개가 그 방향이라 reject됐다는 뜻입니다. `steer=yes`는 주황/초록 target 방향으로 직접 만든 target-aware steering 명령이 선택됐다는 뜻이고, `pivot=yes`는 선속도 0의 제자리 회전 후보가 최종 선택됐다는 뜻입니다. 초록 long-range target만 있을 때는 target-aware steering이 바로 pivot으로 바뀌지 않습니다.
 
 ### 좁은 통로 모드
 

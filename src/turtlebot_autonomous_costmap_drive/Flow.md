@@ -102,7 +102,7 @@ flowchart TD
     K -- "Yes" --> M["COSTMAP_DRIVE or NARROW_COSTMAP_DRIVE"]
 ```
 
-주황색 narrow gap target 또는 초록색 long-range target이 현재 heading에서 5도 이상 벗어나 있으면, 먼저 target-aware steering 명령을 만듭니다. 이 명령은 target 방향에 비례한 `angular_z`를 바로 주고, target 각도가 클수록 선속도를 낮춥니다. 전방이 가까우면 같은 target 방향의 제자리 pivot으로 바뀝니다. 이 후보가 costmap footprint 검사에서 안전하면 기존 점수식으로 우회하지 않고 바로 선택합니다.
+주황색 narrow gap target 또는 초록색 long-range target이 현재 heading에서 5도 이상 벗어나 있으면, 먼저 target-aware steering 명령을 만듭니다. 이 명령은 target 방향에 비례한 `angular_z`를 바로 주고, target 각도가 클수록 선속도를 낮춥니다. 전방이 가까울 때 제자리 pivot으로 바뀌는 권한은 width-valid narrow gap target에만 있고, 초록 long-range target만 있을 때는 느린 조향 후보로 남습니다. 이 후보가 costmap footprint 검사에서 안전하면 기존 점수식으로 우회하지 않고 바로 선택합니다.
 
 Target steering 후보가 unsafe이거나 target 각도가 작으면 fallback으로 기존 후보 샘플링을 수행합니다. 각 후보는 `max_angular_speed` 범위 안에서 샘플링한 `angular_z`와 감속된 `linear_x`를 갖습니다. 일반 전진 후보는 `min_linear_speed`를 유지합니다. 단, 전방 거리가 `front_slow_distance_m` 안에서 충분히 가까워지면 선속도 0의 제자리 회전 후보를 추가로 평가해, stuck/block으로 판정되기 전에 먼저 몸을 틀 수 있게 합니다. 이때 target이 있으면 target 반대 방향 pivot 후보는 제외하고, 너무 느린 pivot 후보도 제외합니다. 후보 궤적은 `trajectory_horizon_s` 동안 `trajectory_dt_s` 간격으로 예측하고, 로봇 반지름 원형 footprint가 lethal 또는 높은 inflation cost를 밟으면 reject합니다. 또한 관측된 gap의 boundary 폭이 `narrow_gap_min_width_m`보다 작고 중심 ray가 충분히 깊으면 통과 불가능 gap sector로 기록하며, 그 sector를 향하는 후보 궤적도 hard reject합니다.
 
@@ -120,7 +120,7 @@ Target steering 후보가 unsafe이거나 target 각도가 작으면 fallback으
 
 Long-range target은 sanitize된 현재 scan에서 `long_range_clearance_search_deg` 범위 안을 훑어 찾습니다. 단일 ray만 믿지 않고 `long_range_clearance_window_deg` 반각 안의 최소 거리를 함께 보며, 후보 궤적의 최종 heading이 이 target에 가까우면 `long_range_clearance_weight`만큼 보상을 받습니다. 폭 부족으로 hard reject된 small gap sector와 겹치는 각도는 long-range 후보에서도 제외해, 통과 불가능 gap 안쪽의 긴 ray가 보상으로 살아남지 않게 합니다. 다만 전방 장애물이 가까우면 이 보상과 start heading 유지 감점이 front clearance ratio만큼 줄어 C/U자 구조에서 local escape가 우선됩니다. RViz에서는 초록색 `long_range_target` 선으로 표시됩니다.
 
-Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 좌우 boundary 중 더 먼 쪽보다 `narrow_gap_min_depth_gain_m` 이상 깊으면 gate로 인정합니다. 조향 target 각도는 후보 ray가 아니라 좌우 boundary 좌표의 midpoint로 잡아 한쪽 벽으로 붙는 현상을 줄입니다. 반대로 boundary 폭이 `narrow_gap_min_width_m`보다 작으면 passable target이 아니라 rejected gap sector가 되어 일반 trajectory도 그쪽으로 가지 못합니다. 같은 gate가 비슷한 각도에 계속 보이면 `narrow_gap_hold_seconds` 동안 hysteresis를 적용해 S자/방 구조에서 target이 매 프레임 튀는 것을 줄입니다.
+Narrow gap target은 후보 중심 ray 좌우에서 가까운 boundary를 찾고, 두 boundary 사이 폭을 코사인법칙으로 계산합니다. 폭이 `narrow_gap_min_width_m ~ narrow_gap_max_width_m` 안에 있고 중심 ray가 좌우 boundary 중 더 먼 쪽보다 `narrow_gap_min_depth_gain_m` 이상 깊으면 gate로 인정합니다. 조향 target 각도는 후보 ray가 아니라 좌우 boundary 좌표의 midpoint로 잡아 한쪽 벽으로 붙는 현상을 줄입니다. 반대로 boundary 폭이 `narrow_gap_min_width_m`보다 작으면 passable target이 아니라 rejected gap sector가 되어 일반 trajectory도 그쪽으로 가지 못합니다. 같은 gate가 비슷한 각도에 계속 보이거나 gate가 잠깐 사라지면 `narrow_gap_hold_seconds` 동안 직전 target을 유지해, 문턱 중앙에서 target이 끊기며 long-range pivot으로 빠지는 현상을 줄입니다.
 
 ## 주행 모드
 

@@ -928,10 +928,12 @@ private:
 
     double steering_target_angle = 0.0;
     bool has_steering_target = false;
+    bool steering_target_from_gap = false;
     if (output.costmap.narrow_gap_target.valid)
     {
       steering_target_angle = output.costmap.narrow_gap_target.angle_rad;
       has_steering_target = true;
+      steering_target_from_gap = true;
     }
     else if (output.costmap.long_range_target.valid)
     {
@@ -957,7 +959,9 @@ private:
       double steering_linear =
           min_linear_speed_ + (speed_cap - min_linear_speed_) * front_ratio * heading_speed_scale;
       bool steering_pivot = false;
-      if (front_ratio < 0.45 && steering_target_error > deg_to_rad(8.0))
+      if (steering_target_from_gap &&
+          front_ratio < 0.45 &&
+          steering_target_error > deg_to_rad(8.0))
       {
         steering_linear = 0.0;
         steering_pivot = true;
@@ -972,7 +976,7 @@ private:
       {
         accept_target_steering(min_linear_speed_, target_angular, false);
       }
-      if (!found && steering_target_error > deg_to_rad(8.0))
+      if (!found && steering_target_from_gap && steering_target_error > deg_to_rad(8.0))
       {
         accept_target_steering(0.0, target_angular, true);
       }
@@ -1015,6 +1019,7 @@ private:
           continue;
         }
         if (has_steering_target &&
+            steering_target_from_gap &&
             steering_target_error > steering_deadband &&
             sign_value(angular_z) != sign_value(normalize_angle_rad(steering_target_angle)))
         {
@@ -1501,6 +1506,11 @@ private:
     {
       held_narrow_gap_target_ = target;
       held_narrow_gap_target_updated_at_ = now;
+    }
+    else if (held_active)
+    {
+      target = held_narrow_gap_target_;
+      target.held = true;
     }
     else if (!held_active)
     {

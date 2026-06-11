@@ -1,0 +1,96 @@
+turtlebot_autonomous_grid_drive:
+  ros__parameters:
+    scan_topic: /scan
+    imu_topic: /imu
+    odom_topic: /odom
+    cmd_vel_topic: /cmd_vel
+    cmd_vel_stamped: false
+    local_grid_topic: /grid_drive/local_grid
+    vector_marker_topic: /grid_drive/vector_markers
+    grid_frame_id: base_link
+    auto_start: false
+    reset_heading_on_start: true
+    require_odom: true
+
+    control_period_ms: 100
+    report_period_ms: 1000
+
+    max_linear_speed: 0.15
+    min_linear_speed: 0.02
+    max_angular_speed: 0.85
+    steering_kp: 2.0
+    recovery_turn_speed: 0.75
+    prefer_left_recovery: true
+
+    emergency_stop_distance_m: 0.125
+    front_stop_distance_m: 0.16
+    front_slow_distance_m: 0.70
+    front_window_deg: 28.0
+    scan_sample_step_deg: 1.0
+    scan_obstacle_min_range_m: 0.01
+    scan_obstacle_max_range_m: 2.0
+    lost_scan_timeout_seconds: 2.0
+
+    grid_radius_m: 2.0
+    grid_resolution_m: 0.02
+    grid_memory_seconds: 1.2
+    grid_memory_max_points: 30000
+    obstacle_thickness_m: 0.02
+    robot_radius_m: 0.105
+    clearance_margin_m: 0.02
+
+    direction_sample_step_deg: 2.0
+    corridor_sample_step_m: 0.04
+    direction_score_tolerance_ratio: 0.10
+    direction_score_tolerance_abs: 0.20
+    unknown_direction_penalty: 1.0
+    blocked_direction_penalty: 2.0
+    min_vector_norm: 0.05
+
+    repulsion_range_m: 0.55
+    repulsion_weight: 1.0
+    lowest_cost_weight: 1.0
+    heading_forward_weight_initial: 1.0
+    heading_decay_distance_m: 4.0
+    reverse_heading_threshold_deg: 150.0
+    reverse_bias_start_m: 0.20
+    reverse_bias_full_m: 1.00
+    reverse_bias_max_weight: 1.2
+
+    min_passable_gap_m: 0.20
+    gap_search_deg: 100.0
+    gap_sector_half_width_deg: 10.0
+    gap_boundary_search_deg: 45.0
+    gap_boundary_obstacle_max_range_m: 0.80
+    gap_boundary_drop_m: 0.08
+    gap_min_center_distance_m: 0.30
+    gap_min_depth_gain_m: 0.25
+
+    tilt_stop_deg: 60.0
+    imu_timeout_seconds: 1.0
+    odom_timeout_seconds: 1.0
+
+    stuck_recovery_enabled: true
+    stuck_command_linear_threshold: 0.03
+    stuck_min_progress_m: 0.03
+    stuck_hold_seconds: 4.0
+    stuck_backup_speed: 0.04
+    stuck_backup_seconds: 1.2
+    stuck_turn_speed: 0.60
+    stuck_turn_seconds: 1.0
+    stuck_cooldown_seconds: 2.0
+
+    emergency_backup_speed: 0.04
+    emergency_backup_seconds: 0.8
+    pivot_hold_seconds: 0.6
+
+    dead_end_memory_enabled: false
+    dead_end_memory_seconds: 45.0
+    dead_end_memory_max_entries: 20
+    dead_end_memory_cell_cost: 1.5
+    dead_end_record_cooldown_seconds: 3.0
+    dead_end_merge_distance_m: 0.35
+    dead_end_merge_angle_deg: 35.0
+    dead_end_backtrack_distance_m: 1.20
+    dead_end_forward_extension_m: 0.20
+    dead_end_corridor_half_width_m: 0.28
