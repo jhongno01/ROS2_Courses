@@ -18,7 +18,7 @@ turtlebot_autonomous_gap_drive:
     emergency_stop_distance_m: 0.12
     front_stop_distance_m: 0.16
     front_slow_distance_m: 0.35
-    side_stop_distance_m: 0.11
+    side_stop_distance_m: 0.115
     safe_gap_distance_m: 0.35
     target_distance_cap_m: 1.00
 

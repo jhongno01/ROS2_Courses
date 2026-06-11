@@ -41,34 +41,34 @@ turtlebot_autonomous_costmap_drive:
     obstacle_memory_seconds: 2.0
     obstacle_memory_max_points: 12000
     robot_radius_m: 0.105
-    inflation_radius_m: 0.03
+    inflation_radius_m: 0.02
     lethal_cost_threshold: 75.0
     unknown_cell_cost: 35.0
     allow_unknown_trajectory: true
 
-    trajectory_horizon_s: 1.8
+    trajectory_horizon_s: 2.2
     trajectory_dt_s: 0.10
     angular_sample_count: 51
-    turn_slowdown_gain: 0.50 # 0.50
+    turn_slowdown_gain: 0.30 # 0.50
     progress_reward_weight: 0.8
-    cost_obstacle_weight: 8.0
+    cost_obstacle_weight: 6.0
     cost_unknown_weight: 0.45
     cost_turn_weight: 0.12
     cost_smooth_weight: 0.20
-    cost_lateral_weight: 0.55
-    heading_alignment_weight: 0.45
+    cost_lateral_weight: 0.45
+    heading_alignment_weight: 0.30
 
     long_range_clearance_enabled: true
-    long_range_clearance_weight: 0.80
+    long_range_clearance_weight: 0.60
     long_range_clearance_max_range_m: 3.0
-    long_range_clearance_min_range_m: 0.70
+    long_range_clearance_min_range_m: 0.40
     long_range_clearance_search_deg: 50.0
     long_range_clearance_window_deg: 6.0
     long_range_clearance_alignment_deg: 45.0
     long_range_clearance_start_bias: 0.5
 
     narrow_gap_target_enabled: true
-    narrow_gap_bonus_weight: 0.60 # 0.6
+    narrow_gap_bonus_weight: 0.70 # 0.6
     narrow_gap_min_width_m: 0.20
     narrow_gap_max_width_m: 0.46
     narrow_gap_search_deg: 100.0
@@ -114,4 +114,4 @@ turtlebot_autonomous_costmap_drive:
     stuck_cooldown_seconds: 2.0
 
     blocked_recovery_enabled: true
-    blocked_recovery_hold_seconds: 3.0
+    blocked_recovery_hold_seconds: 4.0
