@@ -46,6 +46,14 @@ turtlebot_autonomous_grid_drive:
     unknown_direction_penalty: 1.0
     blocked_direction_penalty: 2.0
     low_cost_search_half_angle_deg: 120.0
+    terminal_wall_penalty_enabled: true
+    terminal_wall_start_ratio: 0.70
+    terminal_wall_min_distance_m: 0.55
+    terminal_wall_blocked_ratio: 0.28
+    terminal_wall_penalty_weight: 0.75
+    terminal_side_opening_min_depth_m: 0.45
+    terminal_side_opening_min_angle_deg: 60.0
+    terminal_side_opening_max_angle_deg: 130.0
     min_vector_norm: 0.05
 
     repulsion_range_m: 0.40

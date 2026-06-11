@@ -133,7 +133,10 @@ struct DirectionCandidate
   double angle_rad = 0.0;
   double score = std::numeric_limits<double>::infinity();
   double min_blocked_distance = std::numeric_limits<double>::infinity();
+  double terminal_wall_penalty = 0.0;
   bool driveable = false;
+  bool terminal_wall = false;
+  bool terminal_side_opening = false;
 };
 
 struct GapWidthMeasurement
@@ -165,6 +168,8 @@ struct VectorSummary
   double best_score = std::numeric_limits<double>::infinity();
   double front_m = std::numeric_limits<double>::infinity();
   int blocked_directions = 0;
+  int terminal_wall_directions = 0;
+  int terminal_wall_openings = 0;
   int sampled_directions = 0;
   bool has_drive_direction = false;
   bool reverse_bias_active = false;
@@ -254,6 +259,14 @@ public:
         unknown_direction_penalty_(this->declare_parameter<double>("unknown_direction_penalty", 1.0)),
         blocked_direction_penalty_(this->declare_parameter<double>("blocked_direction_penalty", 2.0)),
         low_cost_search_half_angle_deg_(this->declare_parameter<double>("low_cost_search_half_angle_deg", 180.0)),
+        terminal_wall_penalty_enabled_(this->declare_parameter<bool>("terminal_wall_penalty_enabled", true)),
+        terminal_wall_start_ratio_(this->declare_parameter<double>("terminal_wall_start_ratio", 0.70)),
+        terminal_wall_min_distance_m_(this->declare_parameter<double>("terminal_wall_min_distance_m", 0.55)),
+        terminal_wall_blocked_ratio_(this->declare_parameter<double>("terminal_wall_blocked_ratio", 0.28)),
+        terminal_wall_penalty_weight_(this->declare_parameter<double>("terminal_wall_penalty_weight", 0.75)),
+        terminal_side_opening_min_depth_m_(this->declare_parameter<double>("terminal_side_opening_min_depth_m", 0.45)),
+        terminal_side_opening_min_angle_deg_(this->declare_parameter<double>("terminal_side_opening_min_angle_deg", 60.0)),
+        terminal_side_opening_max_angle_deg_(this->declare_parameter<double>("terminal_side_opening_max_angle_deg", 130.0)),
         min_vector_norm_(this->declare_parameter<double>("min_vector_norm", 0.05)),
         repulsion_range_m_(this->declare_parameter<double>("repulsion_range_m", 0.55)),
         repulsion_weight_(this->declare_parameter<double>("repulsion_weight", 1.0)),
@@ -684,6 +697,14 @@ private:
         ++summary.blocked_directions;
         continue;
       }
+      if (candidate.terminal_wall)
+      {
+        ++summary.terminal_wall_directions;
+        if (candidate.terminal_side_opening)
+        {
+          ++summary.terminal_wall_openings;
+        }
+      }
       if (candidate.score < best_score)
       {
         best_score = candidate.score;
@@ -744,6 +765,12 @@ private:
     const double corridor_half_width = robot_radius_m_ + clearance_margin_m_;
     const double distance_step = std::max(grid.resolution, corridor_sample_step_m_);
     const double lateral_step = std::max(grid.resolution, corridor_sample_step_m_);
+    const double terminal_start_distance = std::max(
+        terminal_wall_min_distance_m_,
+        grid.radius * clamp_value(terminal_wall_start_ratio_, 0.1, 0.95));
+    int terminal_samples = 0;
+    int terminal_blocked_samples = 0;
+    double terminal_min_blocked_distance = std::numeric_limits<double>::infinity();
     int samples = 0;
 
     for (double distance = robot_radius_m_; distance <= grid.radius; distance += distance_step)
@@ -763,6 +790,15 @@ private:
         {
           candidate.min_blocked_distance = std::min(candidate.min_blocked_distance, distance);
         }
+        if (distance >= terminal_start_distance)
+        {
+          ++terminal_samples;
+          if (state >= kBlocked)
+          {
+            ++terminal_blocked_samples;
+            terminal_min_blocked_distance = std::min(terminal_min_blocked_distance, distance);
+          }
+        }
         ++samples;
       }
     }
@@ -776,6 +812,30 @@ private:
     if (odom_pose)
     {
       candidate.score += dead_end_direction_penalty(angle_rad, *odom_pose);
+    }
+    if (terminal_wall_penalty_enabled_ && terminal_samples > 0)
+    {
+      const double blocked_ratio =
+          static_cast<double>(terminal_blocked_samples) / static_cast<double>(terminal_samples);
+      if (blocked_ratio >= clamp_value(terminal_wall_blocked_ratio_, 0.01, 1.0))
+      {
+        const double wall_distance = std::isfinite(terminal_min_blocked_distance)
+                                         ? terminal_min_blocked_distance
+                                         : grid.radius;
+        candidate.terminal_wall = true;
+        candidate.terminal_side_opening =
+            has_terminal_side_opening(grid, angle_rad, wall_distance);
+        if (!candidate.terminal_side_opening)
+        {
+          const double strength =
+              clamp_value((blocked_ratio - terminal_wall_blocked_ratio_) /
+                              std::max(0.01, 1.0 - terminal_wall_blocked_ratio_),
+                          0.0,
+                          1.0);
+          candidate.terminal_wall_penalty = terminal_wall_penalty_weight_ * (0.5 + 0.5 * strength);
+          candidate.score += candidate.terminal_wall_penalty;
+        }
+      }
     }
     if (candidate.min_blocked_distance <= front_stop_distance_m_)
     {
@@ -799,6 +859,84 @@ private:
       return state;
     }
     return unknown_direction_penalty_;
+  }
+
+  bool has_terminal_side_opening(
+      const LocalGrid &grid,
+      double angle_rad,
+      double wall_distance) const
+  {
+    const double base_distance = clamp_value(
+        std::isfinite(wall_distance) ? wall_distance - 0.12 : grid.radius * 0.85,
+        robot_radius_m_,
+        std::max(robot_radius_m_, grid.radius - grid.resolution));
+    const double base_x = base_distance * std::cos(angle_rad);
+    const double base_y = base_distance * std::sin(angle_rad);
+    const double min_angle = clamp_value(terminal_side_opening_min_angle_deg_, 20.0, 170.0);
+    const double max_angle = clamp_value(
+        std::max(terminal_side_opening_max_angle_deg_, min_angle),
+        min_angle,
+        175.0);
+
+    for (int side = -1; side <= 1; side += 2)
+    {
+      const double side_sign = static_cast<double>(side);
+      for (double offset_deg = min_angle; offset_deg <= max_angle + 1e-6; offset_deg += 10.0)
+      {
+        const double side_angle = angle_rad + side_sign * deg_to_rad(offset_deg);
+        if (side_opening_corridor_is_clear(grid, base_x, base_y, side_angle))
+        {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool side_opening_corridor_is_clear(
+      const LocalGrid &grid,
+      double start_x,
+      double start_y,
+      double side_angle) const
+  {
+    const double depth = std::max(grid.resolution, terminal_side_opening_min_depth_m_);
+    const double corridor_half_width = robot_radius_m_ + clearance_margin_m_;
+    const double distance_step = std::max(grid.resolution, corridor_sample_step_m_);
+    const double lateral_step = std::max(grid.resolution, corridor_sample_step_m_);
+    int samples = 0;
+    int free_samples = 0;
+    int blocked_samples = 0;
+
+    for (double distance = grid.resolution; distance <= depth + 1e-6; distance += distance_step)
+    {
+      for (double lateral = -corridor_half_width; lateral <= corridor_half_width + 1e-6; lateral += lateral_step)
+      {
+        const double x = start_x + distance * std::cos(side_angle) - lateral * std::sin(side_angle);
+        const double y = start_y + distance * std::sin(side_angle) + lateral * std::cos(side_angle);
+        double state = kUnknown;
+        if (!state_at(grid, x, y, state))
+        {
+          continue;
+        }
+        ++samples;
+        if (state <= kFree)
+        {
+          ++free_samples;
+        }
+        else if (state >= kBlocked)
+        {
+          ++blocked_samples;
+        }
+      }
+    }
+
+    if (samples == 0)
+    {
+      return false;
+    }
+    const double free_ratio = static_cast<double>(free_samples) / static_cast<double>(samples);
+    const double blocked_ratio = static_cast<double>(blocked_samples) / static_cast<double>(samples);
+    return free_ratio >= 0.35 && blocked_ratio <= 0.05;
   }
 
   double dead_end_direction_penalty(double angle_rad, const Pose2D &odom_pose) const
@@ -1884,7 +2022,7 @@ private:
     RCLCPP_INFO(
         this->get_logger(),
         "[%s] enabled=%s imu=%s odom=%s ref=%s tilt=%.1fdeg path=%.2fm "
-        "front=%.2fm best=%.0fdeg score=%.2f blocked=%d/%d rev_bias=%s dead=%s/%d "
+        "front=%.2fm best=%.0fdeg score=%.2f blocked=%d/%d term=%d/%d rev_bias=%s dead=%s/%d "
         "cmd=(%.2f, %.2f) %s",
         output.mode.c_str(),
         output.enabled_requested ? "yes" : "no",
@@ -1898,6 +2036,8 @@ private:
         output.vectors.best_score,
         output.vectors.blocked_directions,
         output.vectors.sampled_directions,
+        output.vectors.terminal_wall_directions,
+        output.vectors.terminal_wall_openings,
         output.vectors.reverse_bias_active ? "yes" : "no",
         output.vectors.dead_end_memory_enabled ? "yes" : "no",
         output.vectors.dead_end_memory_count,
@@ -1949,6 +2089,14 @@ private:
   const double unknown_direction_penalty_;
   const double blocked_direction_penalty_;
   const double low_cost_search_half_angle_deg_;
+  const bool terminal_wall_penalty_enabled_;
+  const double terminal_wall_start_ratio_;
+  const double terminal_wall_min_distance_m_;
+  const double terminal_wall_blocked_ratio_;
+  const double terminal_wall_penalty_weight_;
+  const double terminal_side_opening_min_depth_m_;
+  const double terminal_side_opening_min_angle_deg_;
+  const double terminal_side_opening_max_angle_deg_;
   const double min_vector_norm_;
   const double repulsion_range_m_;
   const double repulsion_weight_;
