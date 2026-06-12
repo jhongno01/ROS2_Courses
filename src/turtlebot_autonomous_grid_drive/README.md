@@ -116,6 +116,8 @@ Grid와 obstacle repulsion은 360도를 그대로 사용합니다. 다만 lowest
 
 각 후보 방향마다 로봇 폭만큼의 corridor를 훑으며 `FREE`, `UNKNOWN`, `BLOCKED` cell cost를 거리 가중으로 누적합니다.
 
+후보 corridor의 끝부분에 BLOCKED cell 비율이 높으면 terminal wall로 보고 점수를 더합니다. 다만 그 끝 지점 근처에서 좌/우로 빠지는 side opening이 보이면 ㄱ자 코너로 보고 terminal wall penalty를 취소합니다.
+
 가장 낮은 cost 방향 하나만 쓰지 않고, 비슷하게 좋은 방향들을 평균해서 `lowest_cost_vector`를 만듭니다. 그 뒤 가까운 BLOCKED cell에서 멀어지는 `obstacle_repulsion_vector`를 더합니다.
 
 초기 heading bias는 시작 직후 뒤쪽으로 많이 가는 것을 막는 용도입니다. `heading_decay_distance_m`까지 odom 누적 주행거리가 늘어나면 `heading_forward_weight_initial`에서 `heading_forward_weight_min`까지 선형으로 줄어듭니다.
@@ -176,6 +178,13 @@ target_angle = atan2(final.y, final.x)
 - `corridor_sample_step_m`: corridor 내부 샘플 간격
 - `unknown_direction_penalty`: UNKNOWN cell 비용
 - `blocked_direction_penalty`: BLOCKED cell 비용
+- `terminal_wall_penalty_enabled`: 후보 corridor 끝이 벽처럼 보일 때 감점 사용 여부
+- `terminal_wall_start_ratio`: 후보 corridor 뒤쪽 몇 퍼센트부터 terminal 구간으로 볼지
+- `terminal_wall_min_distance_m`: 이 거리보다 가까운 벽은 terminal wall로 보지 않음
+- `terminal_wall_blocked_ratio`: terminal 구간 BLOCKED 비율이 이 값 이상이면 벽 후보
+- `terminal_wall_penalty_weight`: side opening이 없는 terminal wall 후보에 더할 점수
+- `terminal_side_opening_min_depth_m`: terminal wall 근처 좌/우 opening으로 인정할 최소 깊이
+- `terminal_side_opening_min_angle_deg`, `terminal_side_opening_max_angle_deg`: 후보 방향 기준 side opening 탐색 각도 범위
 - `direction_score_tolerance_ratio`, `direction_score_tolerance_abs`: 최저 cost와 비슷한 방향을 평균에 포함하는 허용 범위
 - `lowest_cost_weight`: lowest cost vector 크기
 - `repulsion_range_m`: obstacle repulsion이 작동하는 거리

@@ -6,6 +6,7 @@
 - RViz에서 `/grid_drive/local_grid`, `/grid_drive/vector_markers` 표시 확인
 - 직선 통로 50cm 전방 장애물에서 10cm gap은 BLOCKED, 26cm gap은 통과 후보로 남는지 확인
 - ㄱ자 벽/대각선 벽 앞에서 emergency 거리까지 붙기 전에 repulsion으로 미리 비켜가는지 확인
+- 끝이 벽인 막다른 후보에는 `term` 로그가 늘고, side opening이 있는 ㄱ자 코너에서는 `term=x/y`의 y가 같이 늘어 감점이 취소되는지 확인
 - 큰 방+출구 구조에서 heading bias가 후반에 약해지고 lowest-cost/vector 중심으로 출구를 찾는지 확인
 - emergency 상황에서 뒤 corridor가 FREE일 때만 짧게 후진하는지 확인
 - stuck 상황에서 odom 진행 없음이 감지되고 backup 또는 recovery turn으로 넘어가는지 확인

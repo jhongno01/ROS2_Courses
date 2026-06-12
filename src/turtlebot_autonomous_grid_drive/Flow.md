@@ -87,6 +87,8 @@ BLOCKED -> blocked_direction_penalty
 
 각 cell cost는 거리와 곱해서 누적합니다. score가 낮을수록 더 안전하고 열린 방향입니다. 가까운 `BLOCKED`가 `front_stop_distance_m` 안에 있으면 해당 방향은 driveable에서 제외합니다.
 
+후보 corridor의 뒤쪽 `terminal_wall_start_ratio ~ 1.0` 구간에 BLOCKED 비율이 높으면 terminal wall 후보로 봅니다. 이때 terminal 지점 근처 좌/우 `terminal_side_opening_min_angle_deg ~ terminal_side_opening_max_angle_deg` 범위에 충분한 free depth가 있으면 ㄱ자 코너로 보고 감점을 취소합니다. side opening이 없을 때만 `terminal_wall_penalty_weight`를 score에 더합니다.
+
 최저 score 방향 하나만 쓰면 흔들리기 쉬우므로, 최저 score와 비슷한 방향들을 평균해 `lowest_cost_vector`를 만듭니다.
 
 ## Dead-end Memory
@@ -185,6 +187,7 @@ Emergency backup과 stuck backup은 같은 `rear_corridor_is_clear()` 판단을 
 - `best`: lowest-cost vector 방향
 - `score`: 최저 direction score
 - `blocked`: driveable에서 제외된 방향 수 / 전체 샘플 수
+- `term`: terminal wall 후보 수 / side opening으로 감점 취소된 수
 - `rev_bias`: reverse return bias 활성 여부
 - `dead`: dead-end memory 활성 여부 / 기록 개수
 - `cmd`: 최종 `/cmd_vel`
